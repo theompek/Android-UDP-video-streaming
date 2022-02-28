@@ -213,7 +213,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     int srcPos = 15;
                     int length = dp.getLength()-srcPos;
                     Log.d("Myti", "sdsdsdsdsdd ---- 9"+" packet size "+packetId+" dest_Pos : "+destPos+"  final pose: " +(destPos+length));
-                    System.arraycopy( dp.getData(), srcPos, imageAll, destPos, length);
+                    if(destPos+length<=max_image_size)
+                    {
+                        System.arraycopy( dp.getData(), srcPos, imageAll, destPos, length);
+                    }
 
                     Log.d("Myti", "sdsdsdsdsdd ---- 10");
                     Log.d("Myti", " Packet data position  ---------->: " + (packetCount & 0xff));
