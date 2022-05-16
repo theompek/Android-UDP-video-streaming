@@ -175,6 +175,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
         int max_image_size = 200000;
         byte imageAll[] = new byte[max_image_size];
+        byte packetType;
+        byte imageType = 0;
+        byte audioType = 1;
         int packetSize;
         int frame_id;
         int packetCount;
@@ -199,6 +202,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     // Picture composition here
                     byte[] header = Arrays.copyOfRange(dp.getData(), 0, 15);
                     Log.d("Myti", "sdsdsdsdsdd ---- 1");
+                    packetType = Integer.bitCount(header[0])>3?imageType:audioType;
                     packetSize = ((header[14] & 0xff) << 8) | (header[13] & 0xff);
                     packetSize = packetSize>0?packetSize:prev_packet_size;
                     frame_id = ((header[4] & 0x00ff) << 24) | ((header[3] & 0x00ff) << 16) |
