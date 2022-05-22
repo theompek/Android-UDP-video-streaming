@@ -174,7 +174,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         private DatagramPacket dp = new DatagramPacket(buf, buf.length);
 
         int max_image_size = 200000;
-        byte imageAll[2][] = new byte[max_image_size];
+        byte[][] imageAll = new byte[2][max_image_size];
         byte packetType;
         byte imageType = 0;
         byte audioType = 1;
@@ -183,7 +183,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         int packetCount;
         int packetId;
         int frameSize;
-        int prev_packet_size[2] = 0;
+        int[] prev_packet_size = {0,0};
         ImageView image_view = (ImageView)findViewById(R.id.imageView);
 
 
