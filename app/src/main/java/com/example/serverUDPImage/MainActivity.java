@@ -219,23 +219,34 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     }
 
                     Log.d("Myti", "sdsdsdsdsdd ---- 10");
-                    Log.d("Myti", " Packet data position  ---------->: " + (packetCount & 0xff));
+                    Log.d("Myti", " Number of all packets  ---------->: " + (packetCount & 0xff));
 
                     //Save photo
                     if((packetId+1)==packetCount) {
-                        File photo = new File(Environment.getExternalStorageDirectory(),
-                                "photo.jpeg");
 
-                        if (photo.exists()) {
-                            photo.delete();
-                        }
 
                         try {
+                            File photo = new File(Environment.getExternalStorageDirectory(),
+                                    "photo.jpeg");
+
+                            if (photo.exists()) {
+                                photo.delete();
+                            }
+
+                            File photo_scaled = new File(Environment.getExternalStorageDirectory(),
+                                    "photo_scaled.jpeg");
+
+                            if (photo.exists()) {
+                                photo.delete();
+                            }
+
+
+
                             FileOutputStream fos = new FileOutputStream(photo.getPath());
                             imageAll[0]= (byte)0xFF;
                             imageAll[1]= (byte)0xD8;
                             imageAll[frameSize-2]= (byte)0xFF;
-                            imageAll[frameSize-1]= (byte)0xD8;
+                            imageAll[frameSize-1]= (byte)0xD9;
 
                             fos.write(Arrays.copyOfRange(imageAll, 0, frameSize));
                             String s = String.valueOf(fos.getChannel().size());
@@ -247,7 +258,34 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                             Log.d("Myti", "frameSize "+ frameSize);
                             if (bitmap != null)
                             {
-                                image_view.setImageBitmap(bitmap);
+                                try {
+                                    Bitmap new_bitmap = scaleToActualAspectRatio(bitmap,1060,900);
+                                    if(new_bitmap!=null)
+                                    {
+                                    Log.d("Myti", "A1 ");
+                                    FileOutputStream fos_scaled = new FileOutputStream(photo_scaled.getPath());
+                                    Log.d("Myti", "A2 ");
+                                    new_bitmap.compress(Bitmap.CompressFormat.JPEG, 90, fos_scaled);
+                                    Log.d("Myti", "A3 ");
+                                    fos_scaled.flush();
+                                    fos_scaled.close();
+                                    }
+
+                                } catch (Exception e) {
+                                e.printStackTrace();
+                                    Log.d("Myti", "Exception server"+e.toString());
+                            }
+
+                                Log.d("Myti", "B1 ");
+                                if(image_view!=null){
+                                    try {
+                                        image_view.setImageBitmap(bitmap);
+                                    } catch (Exception  e) {
+                                        Log.e("Myti", "Exception in photoCallback", e);
+                                    }
+
+                                }
+                                Log.d("Myti", "B2 ");
                             }
 
 
@@ -259,7 +297,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
 
                     prev_packet_size = packetSize;
-                    String read = new String(dp.getData(),"UTF-8").replaceAll("^\\x00*", "");;
+                    String read = new String(dp.getData(),"UTF-8").replaceAll("^\\x00*", "");
                     client_ip = dp.getAddress();
                     client_port = dp.getPort();
                     Log.d("Myti", "Message: "+packetId+" From server :"+dp.getAddress().toString()+dp.getPort());
@@ -272,7 +310,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     }
                     showMessage("Client : " + packetId, greenColor);
                 } catch (IOException e) {
-                    Log.d("Myti", "Exception server");
+                    Log.d("Myti", "Exception server"+e.toString());
                     e.printStackTrace();
                 }
 
@@ -317,4 +355,23 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             serverThread = null;
         }
     }
+
+    public Bitmap scaleToActualAspectRatio(Bitmap bitmap,  int newWidth, int newHeight) {
+
+        Bitmap newBitmap = null;
+
+        try {
+
+            // recreate the new Bitmap
+            newBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true);
+
+        } catch (Exception e) {
+            Log.d("Myti", "Exception server"+e.toString());
+            e.printStackTrace();
+        }
+
+        return newBitmap;
+    }
+
+
 }

@@ -29,11 +29,11 @@
         android:text="Message from Server" />
 
     <ScrollView
-        android:layout_width="391dp"
-        android:layout_height="169dp"
+        android:layout_width="711dp"
+        android:layout_height="13dp"
         android:layout_above="@+id/imageView"
         android:layout_below="@+id/edMessage"
-        android:layout_marginBottom="45dp">
+        android:layout_marginBottom="136dp">
 
         <LinearLayout
             android:id="@+id/msgList"
@@ -47,11 +47,13 @@
 
     <ImageView
         android:id="@+id/imageView"
-        android:layout_width="350dp"
-        android:layout_height="400dp"
+        android:layout_width="match_parent"
+        android:layout_height="188dp"
         android:layout_above="@+id/send_data"
+        android:layout_below="@+id/edMessage"
         android:layout_centerHorizontal="true"
-        android:layout_marginBottom="81dp"
+        android:layout_marginTop="23dp"
+        android:layout_marginBottom="9dp"
         app:srcCompat="@drawable/image" />
 
     <Button
