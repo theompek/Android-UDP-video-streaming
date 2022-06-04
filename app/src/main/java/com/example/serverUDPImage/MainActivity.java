@@ -170,7 +170,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     class CommunicationThread implements Runnable {
 
         private DatagramSocket clientSocket;
-        private byte buf[] = new byte[1015];
+        byte headerLen = 15;
+        int packetLen = 1000;
+        private byte buf[] = new byte[packetLen+headerLen];
         private DatagramPacket dp = new DatagramPacket(buf, buf.length);
 
         int max_image_size = 200000;
@@ -200,7 +202,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     clientSocket.receive(dp);
                     Log.d("Myti", "Receive message");
                     // Picture composition here
-                    byte[] header = Arrays.copyOfRange(dp.getData(), 0, 15);
+                    byte[] header = Arrays.copyOfRange(dp.getData(), 0, headerLen);
                     Log.d("Myti", "sdsdsdsdsdd ---- 1");
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
@@ -214,12 +216,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                             ((header[6] & 0x00ff) << 8) | (header[5] & 0xff);
                     //frameSize = frameSize & 0x00ff;
                     packetCount = header[9]& 0xff;
-                    packetId = (header[10]& 0xff)-1 ;
+                    packetId = (header[10]& 0xff) ;
                     Log.d("Myti", "sdsdsdsdsdd ---- 2");
                     int destPos = packetId*prev_packet_size[packetType];
-                    int srcPos = 15;
+                    int srcPos = headerLen;
                     int length = dp.getLength()-srcPos;
-                    Log.d("Myti", "sdsdsdsdsdd ---- 9"+" packet size "+packetId+" dest_Pos : "+destPos+"  final pose: " +(destPos+length));
+                    Log.d("Myti", "sdsdsdsdsdd ---- 9"+" packet id "+packetId+" dest_Pos : "+destPos+"  final pose: " +(destPos+length));
                     if(destPos+length<=max_image_size)
                     {
                         System.arraycopy( dp.getData(), srcPos, imageAll[packetType], destPos, length);
