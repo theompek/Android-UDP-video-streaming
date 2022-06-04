@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.SocketException;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
@@ -42,6 +43,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private Handler handler;
     private int greenColor;
     private EditText edMessage;
+    {
+        try {
+        tempClientSocket = new DatagramSocket(SERVER_PORT);
+        } catch (
+        SocketException e) {
+            e.printStackTrace();
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -53,7 +62,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         msgList = findViewById(R.id.msgList);
         edMessage = findViewById(R.id.edMessage);
         verifyStoragePermissions(this);
-    }
+            }
 
     public TextView textView(String message, int color) {
         if (null == message || message.trim().isEmpty()) {
@@ -106,7 +115,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         try {
                             Log.d("Myti", "send start4");
                             Log.d("Myti", "Send message : "+message+" to server : "+ client_ip+client_port);
-
+                            client_ip = InetAddress.getByName("192.168.2.180");
+                            client_port = 8000;
                             DatagramPacket dp = new DatagramPacket(data, data.length, client_ip, client_port);
                             Log.d("Myti", "send start5");
                             tempClientSocket.send(dp);
