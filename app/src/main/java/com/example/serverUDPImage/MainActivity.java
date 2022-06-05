@@ -1,21 +1,30 @@
 package com.example.serverUDPImage;
 
+import static android.Manifest.permission.WRITE_EXTERNAL_STORAGE;
+import static android.os.Build.VERSION.SDK_INT;
+
 import android.Manifest;
 import android.app.Activity;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -26,7 +35,6 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
-import java.net.SocketException;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
@@ -34,21 +42,45 @@ import java.util.Date;
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
 
     private DatagramSocket serverSocket;
-    private DatagramSocket tempClientSocket;
     private InetAddress client_ip;
     private int client_port;
     Thread serverThread = null;
-    public static final int SERVER_PORT = 8081;
+    public static final int SERVER_PORT = 8081; //SERVER_PORT = 8081;
     private LinearLayout msgList;
     private Handler handler;
     private int greenColor;
     private EditText edMessage;
-    {
-        try {
-        tempClientSocket = new DatagramSocket(SERVER_PORT);
-        } catch (
-        SocketException e) {
-            e.printStackTrace();
+    private int PERMISSION_REQUEST_CODE =1;
+
+    private void requestPermission() {
+        if (SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                intent.addCategory("android.intent.category.DEFAULT");
+                intent.setData(Uri.parse(String.format("package:%s",getApplicationContext().getPackageName())));
+                startActivityForResult(intent, 2296);
+            } catch (Exception e) {
+                Intent intent = new Intent();
+                intent.setAction(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                startActivityForResult(intent, 2296);
+            }
+        } else {
+            //below android 11
+            ActivityCompat.requestPermissions(MainActivity.this, new String[]{WRITE_EXTERNAL_STORAGE}, PERMISSION_REQUEST_CODE);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == 2296) {
+            if (SDK_INT >= Build.VERSION_CODES.R) {
+                if (Environment.isExternalStorageManager()) {
+                    // perform action when allow permission success
+                } else {
+                    Toast.makeText(this, "Allow permission for storage access!", Toast.LENGTH_SHORT).show();
+                }
+            }
         }
     }
 
@@ -62,6 +94,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         msgList = findViewById(R.id.msgList);
         edMessage = findViewById(R.id.edMessage);
         verifyStoragePermissions(this);
+
             }
 
     public TextView textView(String message, int color) {
@@ -104,8 +137,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private void sendMessage(final String message) {
         try {
+            requestPermission();
             Log.d("Myti", "send start");
-            if (null != tempClientSocket) {
+            if(serverSocket==null)
+            {
+                serverSocket = new DatagramSocket(SERVER_PORT);
+            }
+
+            if (null != serverSocket) {
                 Log.d("Myti", "send start2");
                 new Thread(new Runnable() {
                     @Override
@@ -119,7 +158,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                             client_port = 8000;
                             DatagramPacket dp = new DatagramPacket(data, data.length, client_ip, client_port);
                             Log.d("Myti", "send start5");
-                            tempClientSocket.send(dp);
+                            serverSocket.send(dp);
                             Log.d("Myti", "send start6");
                         } catch (IOException e) {
                             Log.d("Myti", "Exception server not ip for client");
@@ -151,8 +190,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 //InetAddress address = InetAddress.getByName("localhost");
                 //InetAddress address = InetAddress.getLocalHost();
                 //Log.d("Myti", "IP from local machine : "+address);
+                if(serverSocket==null)
+                {
+                    serverSocket = new DatagramSocket(SERVER_PORT);
+                }
 
-                serverSocket = new DatagramSocket(SERVER_PORT);
             } catch (IOException e) {
                 e.printStackTrace();
                 showMessage("Error Starting Server : " + e.getMessage(), Color.RED);
@@ -202,7 +244,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
         public CommunicationThread(DatagramSocket clientSocket) {
             this.clientSocket = clientSocket;
-            tempClientSocket = clientSocket;
         }
 
         public void run() {
@@ -309,13 +350,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private static final int REQUEST_EXTERNAL_STORAGE = 1;
     private static String[] PERMISSIONS_STORAGE = {
             Manifest.permission.READ_EXTERNAL_STORAGE,
-            Manifest.permission.WRITE_EXTERNAL_STORAGE
+            WRITE_EXTERNAL_STORAGE
     };
 
 
     public static void verifyStoragePermissions(Activity activity) {
         // Check if we have write permission
-        int permission = ActivityCompat.checkSelfPermission(activity, Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        int permission = ActivityCompat.checkSelfPermission(activity, WRITE_EXTERNAL_STORAGE);
 
         if (permission != PackageManager.PERMISSION_GRANTED) {
             // We don't have permission so prompt the user
