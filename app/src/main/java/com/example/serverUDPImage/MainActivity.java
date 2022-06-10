@@ -7,15 +7,11 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
-import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.widget.EditText;
@@ -29,14 +25,11 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.text.SimpleDateFormat;
-import java.util.Arrays;
 import java.util.Date;
 
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
@@ -50,25 +43,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private Handler handler;
     private int greenColor;
     private EditText edMessage;
-    private int PERMISSION_REQUEST_CODE =1;
 
-    private void requestPermission() {
-        if (SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-                intent.addCategory("android.intent.category.DEFAULT");
-                intent.setData(Uri.parse(String.format("package:%s",getApplicationContext().getPackageName())));
-                startActivityForResult(intent, 2296);
-            } catch (Exception e) {
-                Intent intent = new Intent();
-                intent.setAction(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
-                startActivityForResult(intent, 2296);
-            }
-        } else {
-            //below android 11
-            ActivityCompat.requestPermissions(MainActivity.this, new String[]{WRITE_EXTERNAL_STORAGE}, PERMISSION_REQUEST_CODE);
-        }
-    }
+
+
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
@@ -87,6 +64,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Setup.requestPermission(MainActivity.this);
+
         setContentView(R.layout.activity_main);
         setTitle("Server");
         greenColor = ContextCompat.getColor(this, R.color.green);
@@ -137,7 +116,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private void sendMessage(final String message) {
         try {
-            requestPermission();
+
             Log.d("Myti", "send start");
             if(serverSocket==null)
             {
@@ -200,7 +179,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 showMessage("Error Starting Server : " + e.getMessage(), Color.RED);
             }
             if (null != serverSocket) {
-                CommunicationThread commThread = new CommunicationThread(serverSocket);
+                Streaming.CommunicationThread commThread = new Streaming.CommunicationThread(serverSocket, (ImageView)findViewById(R.id.imageView));
                 new Thread(commThread).start();
                 while (!Thread.currentThread().isInterrupted()) {
                     Log.d("Myti", "                         ");
@@ -219,127 +198,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 
-    class CommunicationThread implements Runnable {
-
-        private DatagramSocket clientSocket;
-        byte headerLen = 15;
-        int packetLen = 1000;
-        private byte buf[] = new byte[packetLen+headerLen];
-        private DatagramPacket dp = new DatagramPacket(buf, buf.length);
-
-        int max_image_size = 200000;
-        byte[][] imageAll = new byte[2][max_image_size];
-        byte packetType;
-        byte imageType = 0;
-        byte audioType = 1;
-        int packetSize;
-        int frame_id;
-        int packetCount;
-        int packetId;
-        int frameSize;
-        int[] prev_packet_size = {0,0};
-        ImageView image_view = (ImageView)findViewById(R.id.imageView);
-
-
-
-        public CommunicationThread(DatagramSocket clientSocket) {
-            this.clientSocket = clientSocket;
-        }
-
-        public void run() {
-            while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    Log.d("Myti", "Wait message");
-                    clientSocket.receive(dp);
-                    Log.d("Myti", "Receive message");
-                    // Picture composition here
-                    byte[] header = Arrays.copyOfRange(dp.getData(), 0, headerLen);
-                    Log.d("Myti", "sdsdsdsdsdd ---- 1");
-                    //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
-                    //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
-                    //and 4, 5, 6, 7 ,8 number of 1 means audio type.
-                    packetType = Integer.bitCount(header[0])>3?audioType:imageType;
-                    packetSize = ((header[14] & 0xff) << 8) | (header[13] & 0xff);
-                    packetSize = packetSize>0?packetSize:prev_packet_size[packetType];
-                    frame_id = ((header[4] & 0x00ff) << 24) | ((header[3] & 0x00ff) << 16) |
-                            ((header[2] & 0x00ff) << 8) | (header[1] & 0xff);
-                    frameSize = ((header[8] & 0x00ff) << 24) | ((header[7] & 0x00ff) << 16) |
-                            ((header[6] & 0x00ff) << 8) | (header[5] & 0xff);
-                    //frameSize = frameSize & 0x00ff;
-                    packetCount = header[9]& 0xff;
-                    packetId = (header[10]& 0xff) ;
-                    Log.d("Myti", "sdsdsdsdsdd ---- 2");
-                    int destPos = packetId*prev_packet_size[packetType];
-                    int srcPos = headerLen;
-                    int length = dp.getLength()-srcPos;
-                    Log.d("Myti", "sdsdsdsdsdd ---- 9"+" packet id "+packetId+" dest_Pos : "+destPos+"  final pose: " +(destPos+length));
-                    if(destPos+length<=max_image_size)
-                    {
-                        System.arraycopy( dp.getData(), srcPos, imageAll[packetType], destPos, length);
-                    }
-
-                    Log.d("Myti", "sdsdsdsdsdd ---- 10");
-                    Log.d("Myti", " Packet data position  ---------->: " + (packetCount & 0xff));
-
-                    //Save photo
-                    if((packetId+1)==packetCount) {
-                        File photo = new File(Environment.getExternalStorageDirectory(),
-                                "photo.jpeg");
-
-                        if (photo.exists()) {
-                            photo.delete();
-                        }
-
-                        try {
-                            FileOutputStream fos = new FileOutputStream(photo.getPath());
-                            imageAll[packetType][0]= (byte)0xFF;
-                            imageAll[packetType][1]= (byte)0xD8;
-                            imageAll[packetType][frameSize-2]= (byte)0xFF;
-                            imageAll[packetType][frameSize-1]= (byte)0xD9;
-
-                            fos.write(Arrays.copyOfRange(imageAll[packetType], 0, frameSize));
-                            String s = String.valueOf(fos.getChannel().size());
-                            fos.close();
-
-                            Log.d("Myti", "frameSize "+ frameSize);
-
-                            Bitmap bitmap = BitmapFactory.decodeByteArray(imageAll[packetType], 0, frameSize);
-                            Log.d("Myti", "frameSize "+ frameSize);
-                            if (bitmap != null)
-                            {
-                                image_view.setImageBitmap(bitmap);
-                            }
-
-
-
-                        } catch (java.io.IOException e) {
-                            Log.e("Myti", "Exception in photoCallback", e);
-                        }
-                    }
-
-
-                    prev_packet_size[packetType] = packetSize;
-                    String read = new String(dp.getData(),"UTF-8").replaceAll("^\\x00*", "");;
-                    client_ip = dp.getAddress();
-                    client_port = dp.getPort();
-                    Log.d("Myti", "Message: "+packetId+" From server :"+dp.getAddress().toString()+dp.getPort());
-                    if (null == read || "Disconnect".contentEquals(read)) {
-                        Log.d("Myti", "Disconnected");
-                        read = "Client Disconnected";
-                        showMessage("Client : " + read, greenColor);
-                        Thread.interrupted();
-                        break;
-                    }
-                    showMessage("Client : " + packetId, greenColor);
-                } catch (IOException e) {
-                    Log.d("Myti", "Exception server");
-                    e.printStackTrace();
-                }
-
-            }
-        }
-
-    }
 
     String getTime() {
         SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss");
