@@ -1,12 +1,8 @@
 package com.example.serverUDPImage;
 
-import static android.Manifest.permission.WRITE_EXTERNAL_STORAGE;
 import static android.os.Build.VERSION.SDK_INT;
 
-import android.Manifest;
-import android.app.Activity;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
@@ -22,7 +18,6 @@ import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import java.io.IOException;
@@ -72,7 +67,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         handler = new Handler();
         msgList = findViewById(R.id.msgList);
         edMessage = findViewById(R.id.edMessage);
-        verifyStoragePermissions(this);
+        Setup.verifyStoragePermissions(this);
 
             }
 
@@ -204,27 +199,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         return sdf.format(new Date());
     }
 
-    // Storage Permissions
-    private static final int REQUEST_EXTERNAL_STORAGE = 1;
-    private static String[] PERMISSIONS_STORAGE = {
-            Manifest.permission.READ_EXTERNAL_STORAGE,
-            WRITE_EXTERNAL_STORAGE
-    };
 
-
-    public static void verifyStoragePermissions(Activity activity) {
-        // Check if we have write permission
-        int permission = ActivityCompat.checkSelfPermission(activity, WRITE_EXTERNAL_STORAGE);
-
-        if (permission != PackageManager.PERMISSION_GRANTED) {
-            // We don't have permission so prompt the user
-            ActivityCompat.requestPermissions(
-                    activity,
-                    PERMISSIONS_STORAGE,
-                    REQUEST_EXTERNAL_STORAGE
-            );
-        }
-    }
 
     @Override
     protected void onDestroy() {
