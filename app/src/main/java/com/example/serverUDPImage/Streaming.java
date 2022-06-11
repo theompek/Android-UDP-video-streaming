@@ -15,8 +15,13 @@ import java.net.InetAddress;
 import java.util.Arrays;
 
 public class Streaming {
+    private DatagramSocket serverSocket;
+    public static final int SERVER_PORT = 8081; //SERVER_PORT = 8081;
+    private InetAddress client_ip;
+    private int client_port;
 
-    static class CommunicationThread implements Runnable {
+
+    public class CommunicationThread implements Runnable {
 
         private DatagramSocket clientSocket;
         byte headerLen = 15;
@@ -41,13 +46,18 @@ public class Streaming {
 
 
 
-        public CommunicationThread(DatagramSocket clientSocket, ImageView image_view){
+        public CommunicationThread(ImageView image_view){
             this.clientSocket = clientSocket;
             this.image_view = image_view;
         }
 
         public void run() {
             while (!Thread.currentThread().isInterrupted()) {
+                Log.d("Myti", "Remote ip: "+String.valueOf(serverSocket.getRemoteSocketAddress()));
+                Log.d("Myti", "Remote port number: "+String.valueOf(serverSocket.getPort()));
+                Log.d("Myti", "Local ip: "+String.valueOf(serverSocket.getLocalAddress()));
+                Log.d("Myti", "Local port number: "+String.valueOf(serverSocket.getLocalPort()));
+                Log.d("Myti", "Address:  "+String.valueOf(serverSocket.getInetAddress()));
                 try {
                     Log.d("Myti", "Wait message");
                     clientSocket.receive(dp);
@@ -138,4 +148,42 @@ public class Streaming {
     }
 
 
+
+    public void sendMessage(final String message) {
+        try {
+
+            Log.d("Myti", "send start");
+            if(serverSocket==null)
+            {
+                serverSocket = new DatagramSocket(SERVER_PORT);
+            }
+
+            if (null != serverSocket) {
+                Log.d("Myti", "send start2");
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Log.d("Myti", "send start3");
+                        byte[] data = message.getBytes( );
+                        try {
+                            Log.d("Myti", "send start4");
+                            Log.d("Myti", "Send message : "+message+" to server : "+ client_ip+client_port);
+                            client_ip = InetAddress.getByName("192.168.2.180");
+                            client_port = 8000;
+                            DatagramPacket dp = new DatagramPacket(data, data.length, client_ip, client_port);
+                            Log.d("Myti", "send start5");
+                            serverSocket.send(dp);
+                            Log.d("Myti", "send start6");
+                        } catch (IOException e) {
+                            Log.d("Myti", "Exception server not ip for client");
+                            e.printStackTrace();
+                        }
+                    }
+                }).start();
+            }
+        } catch (Exception e) {
+            Log.d("Myti", "Exception server not ip for client");
+            e.printStackTrace();
+        }
+    }
 }
