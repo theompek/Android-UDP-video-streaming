@@ -9,7 +9,6 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.view.View;
 import android.widget.EditText;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
@@ -19,15 +18,11 @@ import androidx.core.content.ContextCompat;
 
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
 
-    Streaming streaming = new Streaming();
-
-    Thread serverThread = null;
-
+    Streaming.CommunicationThread communicationThread;
+    Thread communicationThreadHandler = null;
     private LinearLayout msgList;
-
     private int greenColor;
     private EditText edMessage;
-
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
@@ -47,45 +42,41 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Setup.requestPermission(MainActivity.this);
-
         setContentView(R.layout.activity_main);
         setTitle("Server");
         greenColor = ContextCompat.getColor(this, R.color.green);
-
         msgList = findViewById(R.id.msgList);
         edMessage = findViewById(R.id.edMessage);
         Setup.verifyStoragePermissions(this);
-
-            }
-
-
+        communicationThread = (new Streaming()).new CommunicationThread(findViewById(R.id.imageView));
+    }
 
     @Override
     public void onClick(View view) {
-
         if (view.getId() == R.id.start_server) {
             msgList.removeAllViews();
             Helpers.showMessage("Server Started.", Color.BLACK,msgList, this);
-            Streaming.CommunicationThread commThread = streaming.new CommunicationThread((ImageView)findViewById(R.id.imageView));
-            this.serverThread = new Thread(commThread);
-            this.serverThread.start();
+            this.communicationThreadHandler = new Thread(communicationThread);
+            this.communicationThreadHandler.start();
             return;
         }
+
         if (view.getId() == R.id.send_data) {
             String msg = edMessage.getText().toString().trim();
             Helpers.showMessage("Server : " + msg, Color.BLUE, msgList, this);
-            streaming.sendMessage(msg);
+            communicationThread.sendMessage(msg);
         }
+
     }
 
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (null != serverThread) {
-            streaming.sendMessage("Disconnect");
-            serverThread.interrupt();
-            serverThread = null;
+        if (null != communicationThreadHandler) {
+            communicationThread.sendMessage("Disconnect");
+            communicationThreadHandler.interrupt();
+            communicationThreadHandler = null;
         }
     }
 }
