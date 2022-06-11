@@ -56,6 +56,7 @@ public class Streaming {
 
         public void run() {
             while (!Thread.currentThread().isInterrupted()) {
+                Log.d("Myti", "Get data");
                 try {
                     phoneSocket.receive(phoneDpReceive);
                     byte[] header = Arrays.copyOfRange(phoneDpReceive.getData(), 0, headerLen);
@@ -132,9 +133,19 @@ public class Streaming {
         public void sendMessage(String message) {
             try {
                 if (null != phoneSocket) {
-                    byte[] data = message.getBytes( );
-                    DatagramPacket dp = new DatagramPacket(data, data.length, esp32Ip, esp32Port);
-                    phoneSocket.send(dp);
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            byte[] data = message.getBytes( );
+                            try {
+                                DatagramPacket dp = new DatagramPacket(data, data.length, esp32Ip, esp32Port);
+                                phoneSocket.send(dp);
+                            } catch (IOException e) {
+                                Log.d("Myti", "Exception server not ip for client");
+                                e.printStackTrace();
+                            }
+                        }
+                    }).start();
                 }
             } catch (Exception e) {
                 Log.d("Myti", "Exception server not ip for client");
