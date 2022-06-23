@@ -16,7 +16,7 @@ import java.util.Arrays;
 
 public class Streaming {
 
-    public class CommunicationThread implements Runnable {
+    public class CommunicationReceiveThread implements Runnable {
         public DatagramSocket phoneSocket;
         public int phonePort;
         byte headerLen = 15;
@@ -31,7 +31,7 @@ public class Streaming {
         static final byte audioType = 1;
         int packetSize;
         int frameId;
-        int packetCount;
+        int packetsNumber;
         int packetId;
         int frameSize;
         int[] prevPacketSize = {0,0};
@@ -41,12 +41,12 @@ public class Streaming {
 
 
 
-        public CommunicationThread(ImageView imageView){
+        public CommunicationReceiveThread(ImageView imageView){
             try {
-                phoneSocket =  new DatagramSocket(phonePort);
                 phonePort = 8081;
-                esp32Ip = InetAddress.getByName("192.168.2.180");
+                phoneSocket =  new DatagramSocket(phonePort);
                 esp32Port = 8000;
+                esp32Ip = InetAddress.getByName("192.168.2.180");
             }catch (IOException e) {
                 Log.e("Myti", "Exception in photoCallback", e);
             }
@@ -56,6 +56,10 @@ public class Streaming {
 
         public void run() {
             while (!Thread.currentThread().isInterrupted()) {
+                if (this.imageView!= null){
+                    continue;
+                }
+
                 Log.d("Myti", "Get data");
                 try {
                     phoneSocket.receive(phoneDpReceive);
@@ -71,7 +75,7 @@ public class Streaming {
                     frameSize = ((header[8] & 0x00ff) << 24) | ((header[7] & 0x00ff) << 16) |
                             ((header[6] & 0x00ff) << 8) | (header[5] & 0xff);
                     //frameSize = frameSize & 0x00ff;
-                    packetCount = header[9]& 0xff;
+                    packetsNumber = header[9]& 0xff;
                     packetId = (header[10]& 0xff) ;
                     int destPos = packetId* prevPacketSize[packetType];
                     int srcPos = headerLen;
@@ -82,7 +86,7 @@ public class Streaming {
                     }
 
                     //Save photo
-                    if((packetId+1)==packetCount) {
+                    if((packetId+1)== packetsNumber) {
                         File photo = new File(Environment.getExternalStorageDirectory(),
                                 "photo.jpeg");
 
@@ -155,5 +159,70 @@ public class Streaming {
 
     }
 
+    public class TestSendDataCommunicationThread implements Runnable {
+        public DatagramSocket phoneSocketSendDataTest;
+        public int phonePortSendDataTest;
+        byte headerLen = 15;
+        int packetLen = 1000;
+        private byte buf[] = new byte[packetLen + headerLen];
+        private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
 
+        int maxImageSize = 200000;
+        byte[][] imageAll = new byte[2][maxImageSize];
+        byte packetType;
+        static final byte imageType = 0;
+        static final byte audioType = 1;
+        int packetSize;
+        int frameId;
+        int packetsNumber;
+        int packetId;
+        int frameSize;
+        int[] prevPacketSize = {0, 0};
+        ImageView imageView;
+        InetAddress phoneIpReceiveDataTest;
+        int phonePortReceiveDataTest;
+
+
+        public TestSendDataCommunicationThread(ImageView imageView, InetAddress localIP) {
+            try {
+                phonePortSendDataTest = 8000;
+                phoneSocketSendDataTest = new DatagramSocket(phonePortSendDataTest);
+                phoneIpReceiveDataTest = localIP;
+                phonePortReceiveDataTest = 8081;
+
+            } catch (IOException e) {
+                Log.e("Myti", "Exception in photoCallback", e);
+            }
+            this.imageView = imageView;
+
+        }
+
+        public void run() {
+            try {
+                if (null != phoneSocketSendDataTest) {
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            byte data[] = new byte[2];
+                            for (int i = 0; i < data.length; i++) {
+                                data[i]=(byte)i;
+                            }
+                            try {
+                                while(true){
+                                    DatagramPacket dp = new DatagramPacket(data, data.length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                                    phoneSocketSendDataTest.send(dp);
+                                }
+                            } catch (IOException e) {
+                                Log.d("Myti", "Exception server not ip for client");
+                                e.printStackTrace();
+                            }
+                        }
+                    }).start();
+                }
+            } catch (Exception e) {
+                Log.d("Myti", "Exception server not ip for client");
+                e.printStackTrace();
+            }
+        }
+    }
 }

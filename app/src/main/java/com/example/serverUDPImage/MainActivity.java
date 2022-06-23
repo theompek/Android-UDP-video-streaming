@@ -4,9 +4,11 @@ import static android.os.Build.VERSION.SDK_INT;
 
 import android.content.Intent;
 import android.graphics.Color;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.text.format.Formatter;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -16,10 +18,15 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
 
-    Streaming.CommunicationThread communicationThread;
-    Thread communicationThreadHandler = null;
+    Streaming.CommunicationReceiveThread communicationReceiveThread;
+    Streaming.TestSendDataCommunicationThread communicationSendThread;
+    Thread communicationReceiveThreadHandler = null;
+    Thread communicationSendThreadHandler = null;
     private LinearLayout msgList;
     private int greenColor;
     private EditText edMessage;
@@ -48,7 +55,16 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         msgList = findViewById(R.id.msgList);
         edMessage = findViewById(R.id.edMessage);
         Setup.verifyStoragePermissions(this);
-        communicationThread = (new Streaming()).new CommunicationThread(findViewById(R.id.imageView));
+        //setContentView(R.layout.activity_main);
+        WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+        InetAddress localIPAddress = null;
+        try {
+            localIPAddress = InetAddress.getByName(Formatter.formatIpAddress(wifiManager.getConnectionInfo().getIpAddress()));
+        } catch (UnknownHostException e) {
+            e.printStackTrace();
+        }
+        communicationReceiveThread = (new Streaming()).new CommunicationReceiveThread(findViewById(R.id.imageView));
+        communicationSendThread = (new Streaming()).new TestSendDataCommunicationThread(findViewById(R.id.imageView), localIPAddress);
     }
 
     @Override
@@ -56,15 +72,17 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         if (view.getId() == R.id.start_server) {
             msgList.removeAllViews();
             Helpers.showMessage("Server Started.", Color.BLACK,msgList, this);
-            this.communicationThreadHandler = new Thread(communicationThread);
-            this.communicationThreadHandler.start();
+            this.communicationReceiveThreadHandler = new Thread(communicationReceiveThread);
+            this.communicationSendThreadHandler = new Thread(communicationSendThread);
+            this.communicationReceiveThreadHandler.start();
+            this.communicationSendThreadHandler.start();
             return;
         }
 
         if (view.getId() == R.id.send_data) {
             String msg = edMessage.getText().toString().trim();
             Helpers.showMessage("Server : " + msg, Color.BLUE, msgList, this);
-            communicationThread.sendMessage(msg);
+            communicationReceiveThread.sendMessage(msg);
         }
 
     }
@@ -73,10 +91,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (null != communicationThreadHandler) {
-            communicationThread.sendMessage("Disconnect");
-            communicationThreadHandler.interrupt();
-            communicationThreadHandler = null;
+        if (null != communicationReceiveThreadHandler) {
+            communicationReceiveThread.sendMessage("Disconnect");
+            communicationReceiveThreadHandler.interrupt();
+            communicationReceiveThreadHandler = null;
         }
     }
 }
