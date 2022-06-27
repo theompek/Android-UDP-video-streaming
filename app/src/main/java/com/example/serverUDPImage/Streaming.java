@@ -62,7 +62,6 @@ public class Streaming {
         }
         
         public int findDelimiter(byte[] data, byte delimiter){
-            
             int i=0;
             int j = 0;
             while(i<data.length){
@@ -74,7 +73,6 @@ public class Streaming {
                     return i;
                 i++;
             }
-            
         }
             
 
@@ -91,10 +89,10 @@ public class Streaming {
                     if(searchFrame){
                         frStart = findDelimiter(phoneDpReceive.getData(), startFrameDelimiter);
                         if(frStart = -1) continue;
-                        searchFrame = False;
+                        searchFrame = false;
                     }
-                    currentpacketLength = phoneDpReceive.getLength()-frStart;
-                    System.arraycopy( phoneDpReceive.getData(), frStart+startFrameDelimiter.length, currentPacketData, 0, currentpacketLength);              
+                    currentPacketLength = phoneDpReceive.getLength()-frStart;
+                    System.arraycopy( phoneDpReceive.getData(), frStart+startFrameDelimiter.length, currentPacketData, 0, currentPacketLength);              
                     header = Arrays.copyOfRange(phoneDpReceive.getData(), frStart-headerLen, headerLen);
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
@@ -114,11 +112,12 @@ public class Streaming {
                     int length = phoneDpReceive.getLength()-srcPos;
                     if(destPos+length<= maxImageSize)
                     {
-                        System.arraycopy( phoneDpReceive.getData(), srcPos, imageAll[packetType], destPos, length);
+                        System.arraycopy( currentPacketData, 0, imageAll[packetType], destPos, currentPacketLength);
                     }
 
                     //Save photo
                     if((packetId+1)== packetsNumber) {
+                        searchFrame = true;
                         File photo = new File(Environment.getExternalStorageDirectory(),
                                 "photo.jpeg");
 
