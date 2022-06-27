@@ -31,6 +31,7 @@ public class Streaming {
         byte[]  currentPacketData = new byte[10000];
         bool searchFrame = true;
         int frStart;
+        byte[] header
         int currentPacketLength = 0;
         byte packetType;
         static final byte imageType = 0;
@@ -70,7 +71,7 @@ public class Streaming {
                     if(data[i+j]!=delimiter[j]) break;
                 }
                 if(j==delimiter.length)
-                    return i+j;
+                    return i;
                 i++;
             }
             
@@ -89,13 +90,12 @@ public class Streaming {
                     //Find frame start
                     if(searchFrame){
                         frStart = findDelimiter(phoneDpReceive.getData(), startFrameDelimiter);
-                        if(frStart = -1) 
-                            continue;
+                        if(frStart = -1) continue;
+                        searchFrame = False;
                     }
-                    searchFrame=False;
-                    currentPacketData = Arrays.copyOfRange(phoneDpReceive.getData(), frStart, phoneDpReceive.getLength());
                     currentpacketLength = phoneDpReceive.getLength()-frStart;
-                    byte[] header = Arrays.copyOfRange(phoneDpReceive.getData(), 0, headerLen);
+                    System.arraycopy( phoneDpReceive.getData(), frStart+startFrameDelimiter.length, currentPacketData, 0, currentpacketLength);              
+                    header = Arrays.copyOfRange(phoneDpReceive.getData(), frStart-headerLen, headerLen);
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
                     //and 4, 5, 6, 7 ,8 number of 1 means audio type.
