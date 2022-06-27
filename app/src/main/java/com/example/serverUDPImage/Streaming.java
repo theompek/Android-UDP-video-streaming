@@ -21,11 +21,17 @@ public class Streaming {
         public int phonePort;
         byte headerLen = 15;
         int packetLen = 1000;
+        byte[] startFrameDelimiter = {10, 255, 0 , 255, 10, 10, 200, 100, 1, 0}
+        byte[] startPacketDelimiter = {1, 30, 1, 24, 93, 255}
         private byte buf[] = new byte[packetLen+headerLen];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
 
         int maxImageSize = 200000;
         byte[][] imageAll = new byte[2][maxImageSize];
+        byte[]  currentPacketData = new byte[10000];
+        bool searchFrame = true;
+        int frStart;
+        int currentPacketLength = 0;
         byte packetType;
         static final byte imageType = 0;
         static final byte audioType = 1;
@@ -53,6 +59,23 @@ public class Streaming {
             this.imageView = imageView;
 
         }
+        
+        public int findDelimiter(byte[] data, byte delimiter){
+            
+            int i=0;
+            int j = 0;
+            while(i<data.length){
+                for (j = 0; j < delimiter.length; j++) {
+                    if(i+j >= data.length) return -1;
+                    if(data[i+j]!=delimiter[j]) break;
+                }
+                if(j==delimiter.length)
+                    return i+j;
+                i++;
+            }
+            
+        }
+            
 
         public void run() {
             while (!Thread.currentThread().isInterrupted()) {
@@ -63,6 +86,15 @@ public class Streaming {
                 Log.d("Myti", "Get data");
                 try {
                     phoneSocket.receive(phoneDpReceive);
+                    //Find frame start
+                    if(searchFrame){
+                        frStart = findDelimiter(phoneDpReceive.getData(), startFrameDelimiter);
+                        if(frStart = -1) 
+                            continue;
+                    }
+                    searchFrame=False;
+                    currentPacketData = Arrays.copyOfRange(phoneDpReceive.getData(), frStart, phoneDpReceive.getLength());
+                    currentpacketLength = phoneDpReceive.getLength()-frStart;
                     byte[] header = Arrays.copyOfRange(phoneDpReceive.getData(), 0, headerLen);
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
