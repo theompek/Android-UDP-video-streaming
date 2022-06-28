@@ -6,6 +6,7 @@ import android.os.Environment;
 import android.util.Log;
 import android.widget.ImageView;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -166,6 +167,7 @@ public class Streaming {
         int packetLen = 1000;
         private byte buf[] = new byte[packetLen + headerLen];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
+        File root = Environment.getExternalStorageDirectory();
 
         int maxImageSize = 200000;
         byte[][] imageAll = new byte[2][maxImageSize];
@@ -209,6 +211,10 @@ public class Streaming {
                             }
                             try {
                                 while(true){
+                                    Bitmap bMap = BitmapFactory.decodeFile("img1.jpeg");
+                                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                                    bMap.compress(Bitmap.CompressFormat.PNG, 100, baos);
+                                    data = baos.toByteArray();
                                     DatagramPacket dp = new DatagramPacket(data, data.length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                                     phoneSocketSendDataTest.send(dp);
                                 }
