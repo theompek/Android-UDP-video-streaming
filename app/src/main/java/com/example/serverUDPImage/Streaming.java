@@ -20,19 +20,22 @@ public class Streaming {
     public class CommunicationReceiveThread implements Runnable {
         public DatagramSocket phoneSocket;
         public int phonePort;
-        byte headerLen = 15;
-        int packetLen = 1000;
-        byte[] startFrameDelimiter = {10, 255, 0 , 255, 10, 10, 200, 100, 1, 0}
-        byte[] startPacketDelimiter = {1, 30, 1, 24, 93, 255}
+        byte headerLen = 17;
+        int packetLen = 990;
+        byte[] startFrameDelimiter = {10, (byte) 254, 0 , (byte) 255, 10, 10, (byte) 200, 100, 1, 0};
+        byte[] startPacketDelimiter = {1, 30, 1, 24, 93, (byte) 255,(byte) 255,(byte) 255,100,100};
+        int strData = 0;
         private byte buf[] = new byte[packetLen+headerLen];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
+        int maxPacketLen = packetLen+headerLen;
 
         int maxImageSize = 200000;
+        int[] currentFrameId = new int[2];
         byte[][] imageAll = new byte[2][maxImageSize];
         byte[]  currentPacketData = new byte[10000];
-        bool searchFrame = true;
+        boolean searchFrame = true;
         int frStart;
-        byte[] header
+        byte[] header;
         int currentPacketLength = 0;
         byte packetType;
         static final byte imageType = 0;
@@ -42,6 +45,7 @@ public class Streaming {
         int packetsNumber;
         int packetId;
         int frameSize;
+        int packetDestPosition;
         int[] prevPacketSize = {0,0};
         ImageView imageView;
         InetAddress esp32Ip;
@@ -62,7 +66,7 @@ public class Streaming {
 
         }
         
-        public int findDelimiter(byte[] data, byte delimiter){
+        public int findDelimiter(byte[] data, byte[] delimiter){
             int i=0;
             int j = 0;
             while(i<data.length){
@@ -74,6 +78,7 @@ public class Streaming {
                     return i;
                 i++;
             }
+            return -1;
         }
             
 
@@ -89,16 +94,23 @@ public class Streaming {
                     //Find frame start
                     if(searchFrame){
                         frStart = findDelimiter(phoneDpReceive.getData(), startFrameDelimiter);
-                        if(frStart = -1) continue;
-                        searchFrame = false;
+                        if(frStart == -1) continue;
+                        strData = frStart+startFrameDelimiter.length;
+                    }else{
+                        frStart = findDelimiter(phoneDpReceive.getData(), startPacketDelimiter);
+                        if(frStart == -1) continue;
+                        strData = frStart +startPacketDelimiter.length;
                     }
-                    currentPacketLength = phoneDpReceive.getLength()-frStart;
-                    System.arraycopy( phoneDpReceive.getData(), frStart+startFrameDelimiter.length, currentPacketData, 0, currentPacketLength);              
+
+                    currentPacketLength = phoneDpReceive.getLength()-strData;
+                    System.arraycopy( phoneDpReceive.getData(), strData, currentPacketData, 0, currentPacketLength);
                     header = Arrays.copyOfRange(phoneDpReceive.getData(), frStart-headerLen, headerLen);
+                    // ------------ Header construction start -----------
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
                     //and 4, 5, 6, 7 ,8 number of 1 means audio type.
                     packetType = Integer.bitCount(header[0])>3?audioType:imageType;
+                    packetDestPosition = ((header[16] & 0xff) << 8) | (header[15] & 0xff);
                     packetSize = ((header[14] & 0xff) << 8) | (header[13] & 0xff);
                     packetSize = packetSize>0?packetSize: prevPacketSize[packetType];
                     frameId = ((header[4] & 0x00ff) << 24) | ((header[3] & 0x00ff) << 16) |
@@ -108,16 +120,23 @@ public class Streaming {
                     //frameSize = frameSize & 0x00ff;
                     packetsNumber = header[9]& 0xff;
                     packetId = (header[10]& 0xff) ;
-                    int destPos = packetId* prevPacketSize[packetType];
-                    int srcPos = headerLen;
-                    int length = phoneDpReceive.getLength()-srcPos;
-                    if(destPos+length<= maxImageSize)
+                    // ------------ Header construction end -----------
+
+                    if(searchFrame){
+                        currentFrameId[packetType] = frameId;
+                        searchFrame = false;
+                    }
+                    //int destPos = packetId* prevPacketSize[packetType];
+                    if(packetDestPosition+currentPacketLength <= maxImageSize)
                     {
-                        System.arraycopy( currentPacketData, 0, imageAll[packetType], destPos, currentPacketLength);
+                        System.arraycopy( currentPacketData, 0, imageAll[packetType], packetDestPosition, currentPacketLength);
+                    }else{
+                        searchFrame = true;
+                        continue;
                     }
 
                     //Save photo
-                    if((packetId+1)== packetsNumber) {
+                    if(packetId== packetsNumber) {
                         searchFrame = true;
                         File photo = new File(Environment.getExternalStorageDirectory(),
                                 "photo.jpeg");
