@@ -22,17 +22,17 @@ public class Streaming {
         public int phonePort;
         byte headerLen = 15;
         int packetLen = 1000;
-        byte[] startFrameDelimiter = {10, 255, 0 , 255, 10, 10, 200, 100, 1, 0}
-        byte[] startPacketDelimiter = {1, 30, 1, 24, 93, 255}
+        byte[] startFrameDelimiter = {10, (byte) 254, 0 , (byte) 255, 10, 10, (byte) 200, 100, 1, 0};
+        byte[] startPacketDelimiter = {1, 30, 1, 24, 93, (byte) 255};
         private byte buf[] = new byte[packetLen+headerLen];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
 
         int maxImageSize = 200000;
         byte[][] imageAll = new byte[2][maxImageSize];
         byte[]  currentPacketData = new byte[10000];
-        bool searchFrame = true;
+        boolean searchFrame = true;
         int frStart;
-        byte[] header
+        byte[] header;
         int currentPacketLength = 0;
         byte packetType;
         static final byte imageType = 0;
@@ -62,7 +62,7 @@ public class Streaming {
 
         }
         
-        public int findDelimiter(byte[] data, byte delimiter){
+        public int findDelimiter(byte[] data, byte[] delimiter){
             int i=0;
             int j = 0;
             while(i<data.length){
@@ -74,6 +74,7 @@ public class Streaming {
                     return i;
                 i++;
             }
+            return -1;
         }
             
 
@@ -89,7 +90,7 @@ public class Streaming {
                     //Find frame start
                     if(searchFrame){
                         frStart = findDelimiter(phoneDpReceive.getData(), startFrameDelimiter);
-                        if(frStart = -1) continue;
+                        if(frStart == -1) continue;
                         searchFrame = false;
                     }
                     currentPacketLength = phoneDpReceive.getLength()-frStart;
