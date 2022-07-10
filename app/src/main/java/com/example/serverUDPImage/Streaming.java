@@ -14,24 +14,31 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.util.Arrays;
+import java.util.LinkedList;
+import java.util.Queue;
 
 public class Streaming {
+    int packetsLength = 1000;
+    byte maxImagesStored = 10;
 
     public class CommunicationReceiveThread implements Runnable {
         public DatagramSocket phoneSocket;
         public int phonePort;
-        byte headerLen = 15;
+        byte headerLen = 16;
         int packetLen = 1000;
+        int datagramPacketLength = 1024;
         byte[] startFrameDelimiter = {10,(byte)255, 0 , (byte)255, 10, 10, (byte)200, 100, 1, 0};
         byte[] startPacketDelimiter = {1, 30, 1, 24, 93, (byte)255};
-        private byte buf[] = new byte[packetLen+headerLen];
+        private byte buf[] = new byte[datagramPacketLength];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
 
-        int maxImageSize = 200000;
-        byte[][] imageAll = new byte[2][maxImageSize];
+        Queue<FrameReceivedObject> imagesQueue = new LinkedList<>();
+        int lastFrameInQueue = 0;
+        FrameReceivedObject[] imagesObj = new FrameReceivedObject[maxImagesStored];
         byte[]  currentPacketData = new byte[10000];
         boolean searchFrame = true;
         int frStart;
+        int delimiterLength;
         byte[] header;
         int currentPacketLength = 0;
         byte packetType;
@@ -42,6 +49,7 @@ public class Streaming {
         int packetsNumber;
         int packetId;
         int frameSize;
+        int localFrameId;
         int[] prevPacketSize = {0,0};
         ImageView imageView;
         InetAddress esp32Ip;
@@ -63,7 +71,7 @@ public class Streaming {
         }
         
         public int findDelimiter(byte[] data, byte[] delimiter){
-            int i=0;
+            int i = 0;
             int j = 0;
             while(i<data.length){
                 for (j = 0; j < delimiter.length; j++) {
@@ -76,7 +84,6 @@ public class Streaming {
             }
             return -1;
         }
-            
 
         public void run() {
             while (!Thread.currentThread().isInterrupted()) {
@@ -92,34 +99,55 @@ public class Streaming {
                         frStart = findDelimiter(phoneDpReceive.getData(), startFrameDelimiter);
                         if(frStart == -1) continue;
                         searchFrame = false;
+                        delimiterLength = startFrameDelimiter.length;
+                    }else {
+                        frStart = findDelimiter(phoneDpReceive.getData(), startPacketDelimiter);
+                        searchFrame = true;
+                        if(frStart == -1) continue;
+                        delimiterLength = startPacketDelimiter.length;
                     }
-                    currentPacketLength = phoneDpReceive.getLength()-frStart;
-                    System.arraycopy( phoneDpReceive.getData(), frStart+startFrameDelimiter.length, currentPacketData, 0, currentPacketLength);              
+
+                    currentPacketLength = phoneDpReceive.getLength()- frStart - delimiterLength;
+                    System.arraycopy( phoneDpReceive.getData(), frStart+delimiterLength, currentPacketData, 0, currentPacketLength);
                     header = Arrays.copyOfRange(phoneDpReceive.getData(), frStart-headerLen, headerLen);
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
                     //and 4, 5, 6, 7 ,8 number of 1 means audio type.
                     packetType = Integer.bitCount(header[0])>3?audioType:imageType;
-                    packetSize = ((header[14] & 0xff) << 8) | (header[13] & 0xff);
-                    packetSize = packetSize>0?packetSize: prevPacketSize[packetType];
                     frameId = ((header[4] & 0x00ff) << 24) | ((header[3] & 0x00ff) << 16) |
                             ((header[2] & 0x00ff) << 8) | (header[1] & 0xff);
                     frameSize = ((header[8] & 0x00ff) << 24) | ((header[7] & 0x00ff) << 16) |
                             ((header[6] & 0x00ff) << 8) | (header[5] & 0xff);
-                    //frameSize = frameSize & 0x00ff;
                     packetsNumber = header[9]& 0xff;
                     packetId = (header[10]& 0xff) ;
-                    int destPos = packetId* prevPacketSize[packetType];
-                    int srcPos = headerLen;
-                    int length = phoneDpReceive.getLength()-srcPos;
-                    if(destPos+length<= maxImageSize)
+                    packetSize = ((header[14] & 0xff) << 8) | (header[13] & 0xff);  //Δεν χρειάζεται, θα είναι fix 1024bytes για όλα τα πακέτα
+                    localFrameId = (header[15]& 0xff) ;
+
+                    /*if(packetId == packetsNumber)
                     {
-                        System.arraycopy( currentPacketData, 0, imageAll[packetType], destPos, currentPacketLength);
+
+                    }*/
+                    if(localFrameId>=maxImagesStored || localFrameId<0)
+                    {
+                        //The other values from the header can be used so as the frame be restored, for example we
+                        //can compare the values frameId or packetId or frameSize with the values of the store frameObject and find
+                        //the right location of the packet, for the moment we just skip this step and we implement this in the future
+                        continue;
+                    }
+                    if(imagesObj[localFrameId].compareHeaders(header)!=0) continue;
+                    imagesObj[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
+                    imagesObj[localFrameId].addDataToBuffer(currentPacketData, currentPacketLength, packetId);
+                    if(imagesObj[localFrameId].frameFilled() && lastFrameInQueue<frameId){
+                            lastFrameInQueue = frameId;
+                            imagesQueue.add(imagesObj[localFrameId]);
                     }
 
+
+                    //System.arraycopy( currentPacketData, 0, imagesObj[localFrameId].buffer, destPos, currentPacketLength);
                     //Save photo
-                    if((packetId+1)== packetsNumber) {
-                        searchFrame = true;
+                    FrameReceivedObject imgObj = imagesQueue.poll();
+                    if(imgObj!=null) {
+
                         File photo = new File(Environment.getExternalStorageDirectory(),
                                 "photo.jpeg");
 
@@ -129,16 +157,12 @@ public class Streaming {
 
                         try {
                             FileOutputStream fos = new FileOutputStream(photo.getPath());
-                            imageAll[packetType][0]= (byte)0xFF;
-                            imageAll[packetType][1]= (byte)0xD8;
-                            imageAll[packetType][frameSize-2]= (byte)0xFF;
-                            imageAll[packetType][frameSize-1]= (byte)0xD9;
 
-                            fos.write(Arrays.copyOfRange(imageAll[packetType], 0, frameSize));
+                            fos.write(Arrays.copyOfRange(imgObj.buffer, 0, imgObj.frameSize));
                             String s = String.valueOf(fos.getChannel().size());
                             fos.close();
 
-                            Bitmap bitmap = BitmapFactory.decodeByteArray(imageAll[packetType], 0, frameSize);
+                            Bitmap bitmap = BitmapFactory.decodeByteArray(imgObj.buffer, 0, imgObj.frameSize);
                             Log.d("Myti", "frameSize "+ frameSize);
                             if (bitmap != null)
                             {
@@ -149,14 +173,9 @@ public class Streaming {
                         }
                     }
 
-                    prevPacketSize[packetType] = packetSize;
-                    String read = new String(phoneDpReceive.getData(),"UTF-8").replaceAll("^\\x00*", "");;
-                    esp32Ip = phoneDpReceive.getAddress();
-                    esp32Port = phoneDpReceive.getPort();
-                    if (null == read || "Disconnect".contentEquals(read)) {
-                        Thread.interrupted();
-                        break;
-                    }
+                    //esp32Ip = phoneDpReceive.getAddress();
+                    //esp32Port = phoneDpReceive.getPort();
+
                 } catch (IOException e) {
                     Log.d("Myti", "Exception server");
                     e.printStackTrace();
@@ -164,7 +183,6 @@ public class Streaming {
 
             }
         }
-
 
 
         public void sendMessage(String message) {
@@ -189,6 +207,103 @@ public class Streaming {
                 e.printStackTrace();
             }
         }
+
+    }
+
+    public class FrameReceivedObject{
+        int maxObjectLength = 20000;    //Max size 20kbytes
+        byte[]  buffer = new byte[maxObjectLength];
+        int objLength=0;
+        int packetsNumber = -1;
+        int frameId=-1;
+        int frameSize=-1;
+        int localFrameId=-1;
+
+        public byte compareHeaders(byte[] header){
+            int crnFrameId = ((header[4] & 0x00ff) << 24) | ((header[3] & 0x00ff) << 16) |
+                    ((header[2] & 0x00ff) << 8) | (header[1] & 0xff);
+            int crnFrameSize = ((header[8] & 0x00ff) << 24) | ((header[7] & 0x00ff) << 16) |
+                    ((header[6] & 0x00ff) << 8) | (header[5] & 0xff);
+            int crnPacketsNumber = header[9]& 0xff;
+            //packetId = (header[10]& 0xff) ;
+            int crnLocalFrameId = (header[15]& 0xff) ;
+
+            if(frameId==-1){
+                frameId = crnFrameId;
+            }else if( frameId != crnFrameId){
+                initiateFrame();
+                return 1;
+            }
+
+            if(frameSize==-1){
+                if(crnFrameSize<maxObjectLength){
+                    frameSize = crnFrameSize;
+                }else{
+                    initiateFrame();
+                    return 5;
+                }
+            }else if( frameSize != crnFrameSize){
+                return 2;
+            }
+
+            if(packetsNumber==-1){
+                if(crnPacketsNumber*packetsLength<maxObjectLength){
+                    packetsNumber = crnPacketsNumber;
+                }else{
+                    initiateFrame();
+                    return 6;
+                }
+            }else if( packetsNumber != crnPacketsNumber){
+                return 3;
+            }
+
+            if(localFrameId==-1){
+                if(crnLocalFrameId<maxImagesStored && crnLocalFrameId>=0){
+                    localFrameId = crnLocalFrameId;
+                }else{
+                    initiateFrame();
+                    return 7;
+                }
+            }else if( localFrameId != crnLocalFrameId){
+                return 4;
+            }
+
+            //Same headers
+            return 0;
+        }
+
+        public byte addDataToBuffer(byte[] packetData, int packetLength, int packetId){
+            if(packetId*packetLength>maxObjectLength || packetLength!=packetsLength) return 0;
+            System.arraycopy( packetData, 0, buffer, packetId*packetLength, packetLength);
+            objLength += packetLength;
+            packetsNumber++;
+            return 1;
+        }
+
+        public boolean frameFilled(){
+            if(objLength==frameSize) return true;
+
+            return false;
+        }
+
+        public void initiateFrame(){
+            objLength=0;
+            packetsNumber = -1;
+            frameId=-1;
+            frameSize=-1;
+            localFrameId=-1;
+        }
+
+        public void initiateFrame(int packetsNumber, int frameId, int frameSize, int localFrameId){
+            if(localFrameId==-1)
+            {
+                this.packetsNumber = packetsNumber;
+                this.frameId=frameId;
+                this.frameSize=frameSize;
+                this.localFrameId=localFrameId;
+            }
+        }
+
 
     }
 
