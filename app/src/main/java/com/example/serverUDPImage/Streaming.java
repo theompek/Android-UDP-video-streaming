@@ -50,6 +50,7 @@ public class Streaming {
         int packetId;
         int frameSize;
         int localFrameId;
+        int prevLocalFrameId = 0;
         int[] prevPacketSize = {0,0};
         ImageView imageView;
         InetAddress esp32Ip;
@@ -140,6 +141,18 @@ public class Streaming {
                     if(imagesObj[localFrameId].frameFilled() && lastFrameInQueue<frameId){
                             lastFrameInQueue = frameId;
                             imagesQueue.add(imagesObj[localFrameId]);
+                            //Clear the frames buffer which are between 2 consecutive completed frames
+                            if(localFrameId >= prevLocalFrameId) {
+                                for (int i = prevLocalFrameId; i <= localFrameId; i++)
+                                    imagesObj[i].initiateFrame();
+                            }else{
+                                for (int i = prevLocalFrameId; i < maxImagesStored; i++)
+                                    imagesObj[i].initiateFrame();
+
+                                for (int i = 0; i < localFrameId; i++)
+                                    imagesObj[i].initiateFrame();
+                            }
+                            prevLocalFrameId = frameId;
                     }
 
 
