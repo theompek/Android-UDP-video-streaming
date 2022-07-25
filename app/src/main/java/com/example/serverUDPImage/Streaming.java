@@ -36,7 +36,7 @@ public class Streaming {
         int lastFrameInQueue = 0;
         FrameReceivedObject[] imagesObj = new FrameReceivedObject[maxImagesStored];
         byte[]  currentPacketData = new byte[10000];
-        boolean searchFrame = true;
+        boolean searchFrame = false;
         int frStart;
         int delimiterLength;
         byte[] header;
