@@ -72,15 +72,14 @@ public class Streaming {
         }
         
         public int findDelimiter(byte[] data, byte[] delimiter){
-            int i = 0;
+            int i = headerLen;
             int j = 0;
             while(i<data.length){
                 for (j = 0; j < delimiter.length; j++) {
                     if(i+j >= data.length) return -1;
                     if(data[i+j]!=delimiter[j]) break;
                 }
-                if(j==delimiter.length)
-                    return i;
+                if(j==delimiter.length) return i;
                 i++;
             }
             return -1;
@@ -152,7 +151,7 @@ public class Streaming {
                                 for (int i = 0; i < localFrameId; i++)
                                     imagesObj[i].initiateFrame();
                             }
-                            prevLocalFrameId = frameId;
+                            prevLocalFrameId = localFrameId;
                     }
 
 
