@@ -1,10 +1,13 @@
 package com.example.serverUDPImage;
 
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Environment;
 import android.util.Log;
 import android.widget.ImageView;
+
+import androidx.appcompat.app.AppCompatActivity;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -319,7 +322,8 @@ public class Streaming {
 
     }
 
-    public class TestSendDataCommunicationThread implements Runnable {
+    public class TestSendDataCommunicationThread  extends AppCompatActivity implements Runnable {
+        private Context context;
         public DatagramSocket phoneSocketSendDataTest;
         public int phonePortSendDataTest;
         byte headerLen = 15;
@@ -344,8 +348,9 @@ public class Streaming {
         int phonePortReceiveDataTest;
 
 
-        public TestSendDataCommunicationThread(ImageView imageView, InetAddress localIP) {
+        public TestSendDataCommunicationThread(ImageView imageView, InetAddress localIP, Context current) {
             try {
+                this.context = current;
                 phonePortSendDataTest = 8000;
                 phoneSocketSendDataTest = new DatagramSocket(phonePortSendDataTest);
                 phoneIpReceiveDataTest = localIP;
@@ -364,17 +369,22 @@ public class Streaming {
                     new Thread(new Runnable() {
                         @Override
                         public void run() {
-                            byte data[] = new byte[2];
-                            for (int i = 0; i < data.length; i++) {
-                                data[i]=(byte)i;
-                            }
+                            byte dataImages[][] = new byte[3][];
                             try {
+
+                                    //Drawable drawable = getResources().getDrawable(getResources().getIdentifier("img1.jpeg", "drawable", getPackageName()));
+                                    for(int i=0;i<3;i++) {
+                                        String fnm = "p"+String.valueOf(i+1); //  this is image file name
+                                        String PACKAGE_NAME = context.getPackageName();
+                                        int imgId = context.getResources().getIdentifier(PACKAGE_NAME + ":drawable/" + fnm, null, null);
+                                        Bitmap bMap = BitmapFactory.decodeResource(context.getResources(), imgId);
+                                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                                        bMap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
+                                        dataImages[i] = baos.toByteArray();
+                                    }
+
                                 while(true){
-                                    Bitmap bMap = BitmapFactory.decodeFile("img1.jpeg");
-                                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                                    bMap.compress(Bitmap.CompressFormat.PNG, 100, baos);
-                                    data = baos.toByteArray();
-                                    DatagramPacket dp = new DatagramPacket(data, data.length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                                    DatagramPacket dp = new DatagramPacket(dataImages[0], dataImages[0].length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                                     phoneSocketSendDataTest.send(dp);
                                 }
                             } catch (IOException e) {

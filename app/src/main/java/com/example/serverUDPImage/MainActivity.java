@@ -64,11 +64,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             e.printStackTrace();
         }
         communicationReceiveThread = (new Streaming()).new CommunicationReceiveThread(findViewById(R.id.imageView));
-        communicationSendThread = (new Streaming()).new TestSendDataCommunicationThread(findViewById(R.id.imageView), localIPAddress);
+        communicationSendThread = (new Streaming()).new TestSendDataCommunicationThread(findViewById(R.id.imageView), localIPAddress, this);
     }
 
     @Override
     public void onClick(View view) {
+
         if (view.getId() == R.id.start_server) {
             msgList.removeAllViews();
             Helpers.showMessage("Server Started.", Color.BLACK,msgList, this);
