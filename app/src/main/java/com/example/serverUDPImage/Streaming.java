@@ -1,5 +1,6 @@
 package com.example.serverUDPImage;
 
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -30,14 +31,15 @@ public class Streaming {
         byte headerLen = 16;
         int packetLen = 1000;
         int datagramPacketLength = 1024;
-        byte[] startFrameDelimiter = {10, (byte) 255, 0, (byte) 255, 10, 10, (byte) 200, 100, 1, 0};
-        byte[] startPacketDelimiter = {1, 30, 1, 24, 93, (byte) 255};
+        byte[] startFrameDelimiter = {10, 10, 5, 10, 10};
+        byte[] startPacketDelimiter = {5, 50, 5, 50, 50};
         private byte buf[] = new byte[datagramPacketLength];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
 
         Queue<FrameReceivedObject> imagesQueue = new LinkedList<>();
         int lastFrameInQueue = 0;
         FrameReceivedObject[] imagesObj = new FrameReceivedObject[maxImagesStored];
+
         byte[] currentPacketData = new byte[10000];
         boolean searchFrame = false;
         int frStart;
@@ -56,20 +58,25 @@ public class Streaming {
         int prevLocalFrameId = 0;
         int[] prevPacketSize = {0, 0};
         ImageView imageView;
+        Activity mainActivity;
         InetAddress esp32Ip;
         int esp32Port;
 
 
-        public CommunicationReceiveThread(ImageView imageView) {
+        public CommunicationReceiveThread(ImageView imageView, Activity mainActivity) {
             try {
                 phonePort = 8081;
                 phoneSocket = new DatagramSocket(phonePort);
                 esp32Port = 8000;
                 esp32Ip = InetAddress.getByName("192.168.2.180");
+                for(int i=0;i<maxImagesStored;i++){
+                    imagesObj[i]=new FrameReceivedObject();
+                }
             } catch (IOException e) {
                 Log.e("Myti", "Exception in photoCallback", e);
             }
             this.imageView = imageView;
+            this.mainActivity = mainActivity;
 
         }
 
@@ -90,7 +97,7 @@ public class Streaming {
         public void run() {
             while (!Thread.currentThread().isInterrupted()) {
                 if (this.imageView != null) {
-                    continue;
+                    //continue;
                 }
 
                 Log.d("Myti", "Get data");
@@ -104,7 +111,7 @@ public class Streaming {
                         delimiterLength = startFrameDelimiter.length;
                     } else {
                         frStart = findDelimiter(phoneDpReceive.getData(), startPacketDelimiter);
-                        searchFrame = true;
+                        searchFrame = false;
                         if (frStart == -1) continue;
                         delimiterLength = startPacketDelimiter.length;
                     }
@@ -138,9 +145,10 @@ public class Streaming {
                     if (imagesObj[localFrameId].compareHeaders(header) != 0) continue;
                     imagesObj[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
                     imagesObj[localFrameId].addDataToBuffer(currentPacketData, currentPacketLength, packetId);
+
                     if (imagesObj[localFrameId].frameFilled() && lastFrameInQueue < frameId) {
                         lastFrameInQueue = frameId;
-                        imagesQueue.add(imagesObj[localFrameId]);
+                        imagesQueue.add(imagesObj[localFrameId].clone());
                         //Clear the frames buffer which are between 2 consecutive completed frames
                         if (localFrameId >= prevLocalFrameId) {
                             for (int i = prevLocalFrameId; i <= localFrameId; i++)
@@ -178,7 +186,17 @@ public class Streaming {
                             Bitmap bitmap = BitmapFactory.decodeByteArray(imgObj.buffer, 0, imgObj.frameSize);
                             Log.d("Myti", "frameSize " + frameSize);
                             if (bitmap != null) {
-                                imageView.setImageBitmap(bitmap);
+                                mainActivity.runOnUiThread(new Runnable() {
+
+                                    @Override
+                                    public void run() {
+
+                                        // Stuff that updates the UI
+                                        imageView.setImageBitmap(bitmap);
+
+                                    }
+                                });
+
                             }
                         } catch (IOException e) {
                             Log.e("Myti", "Exception in photoCallback", e);
@@ -223,10 +241,11 @@ public class Streaming {
     }
 
     public class FrameReceivedObject {
-        int maxObjectLength = 20000;    //Max size 20kbytes
+        int maxObjectLength = 40000;    //Max size 40kbytes
         byte[] buffer = new byte[maxObjectLength];
         int objLength = 0;
         int packetsNumber = -1;
+        int packetsNumberCounter = 0;
         int frameId = -1;
         int frameSize = -1;
         int localFrameId = -1;
@@ -289,12 +308,12 @@ public class Streaming {
                 return 0;
             System.arraycopy(packetData, 0, buffer, packetId * packetLength, packetLength);
             objLength += packetLength;
-            packetsNumber++;
+            packetsNumberCounter++;
             return 1;
         }
 
         public boolean frameFilled() {
-            if (objLength == frameSize) return true;
+            if (objLength >= frameSize || packetsNumberCounter>=packetsNumber) return true;
 
             return false;
         }
@@ -304,6 +323,7 @@ public class Streaming {
             packetsNumber = -1;
             frameId = -1;
             frameSize = -1;
+            packetsNumberCounter=0;
             localFrameId = -1;
         }
 
@@ -316,6 +336,18 @@ public class Streaming {
             }
         }
 
+        public FrameReceivedObject clone(){
+            FrameReceivedObject objCopy = new FrameReceivedObject();
+            System.arraycopy(this.buffer, 0, objCopy.buffer, 0, this.buffer.length);
+            objCopy.objLength = this.objLength;
+            objCopy.packetsNumber = this.packetsNumber;
+            objCopy.packetsNumberCounter = this.packetsNumberCounter;
+            objCopy.frameId = this.frameId;
+            objCopy.frameSize = this.frameSize;
+            objCopy.localFrameId = this.localFrameId;
+            return objCopy;
+        }
+
 
     }
 
@@ -325,21 +357,15 @@ public class Streaming {
         public int phonePortSendDataTest;
         byte headerLen = 16 ;
         int packetLen = 1000;
-        private byte buf[] = new byte[packetLen + headerLen];
-        private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
-        File root = Environment.getExternalStorageDirectory();
+        //private byte buf[] = new byte[packetLen + headerLen];
+        //private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
+        //File root = Environment.getExternalStorageDirectory();
 
         int maxImageSize = 200000;
         byte[][] imageAll = new byte[2][maxImageSize];
         byte packetType;
         static final byte imageType = 0;
         static final byte audioType = 1;
-        int packetSize;
-        int frameId;
-        int packetsNumber;
-        int packetId;
-        int frameSize;
-        int[] prevPacketSize = {0, 0};
         ImageView imageView;
         InetAddress phoneIpReceiveDataTest;
         int phonePortReceiveDataTest;
@@ -367,24 +393,34 @@ public class Streaming {
                         @Override
                         public void run() {
                             byte dataImages[][] = new byte[3][];
-                            try {
+                            long frameCount = 0;
+                            byte localFrameId = 0;
 
-                                //Drawable drawable = getResources().getDrawable(getResources().getIdentifier("img1.jpeg", "drawable", getPackageName()));
-                                for (int i = 0; i < 3; i++) {
-                                    String fnm = "p" + String.valueOf(i + 1); //  this is image file name
-                                    String PACKAGE_NAME = context.getPackageName();
-                                    int imgId = context.getResources().getIdentifier(PACKAGE_NAME + ":drawable/" + fnm, null, null);
-                                    Bitmap bMap = BitmapFactory.decodeResource(context.getResources(), imgId);
-                                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                                    bMap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
-                                    dataImages[i] = baos.toByteArray();
+                            while(true){
 
-                                    DatagramPacket dp = new DatagramPacket(dataImages[0], dataImages[0].length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
-                                    phoneSocketSendDataTest.send(dp);
+                                try {
+                                    //Drawable drawable = getResources().getDrawable(getResources().getIdentifier("img1.jpeg", "drawable", getPackageName()));
+                                    for (int i = 0; i < 3; i++) {
+                                        for(int j=0;j<20;j++){
+                                            String fnm = "p" + String.valueOf(i + 1); //  this is image file name
+                                            String PACKAGE_NAME = context.getPackageName();
+                                            int imgId = context.getResources().getIdentifier(PACKAGE_NAME + ":drawable/" + fnm, null, null);
+                                            Bitmap bMap = BitmapFactory.decodeResource(context.getResources(), imgId);
+                                            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                                            bMap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
+                                            dataImages[i] = baos.toByteArray();
+
+                                            sendDataUdp(dataImages[i], dataImages[i].length, frameCount, localFrameId);
+                                            frameCount++;
+                                            localFrameId++;
+                                            if (localFrameId == 10) localFrameId = 0;
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    Log.d("Myti", "Exception server not ip for client");
+                                    e.printStackTrace();
                                 }
-                            } catch (IOException e) {
-                                Log.d("Myti", "Exception server not ip for client");
-                                e.printStackTrace();
+
                             }
                         }
                     }).start();
@@ -396,54 +432,75 @@ public class Streaming {
         }
 
 
-        public void sendDataUdp(byte[] frame, long framSize, int frameCount, byte localFrameId) {
+        public void sendDataUdp(byte[] frame, long frameSize, long frameCount, byte localFrameId) {
 
-            byte packetsNumber = 0;  //The number of packets after splitting all the frame
-            byte packetId = 0;       //The ID number(counter) of the current packet
+            byte delimiterLen = 5;
+            short packetsNumber = 0;  //The number of packets after splitting all the frame
+            short packetId = 0;       //The ID number(counter) of the current packet
             short lastPacketLen = 0;     //The last packet has usually smaller length than other because is truncated
             short currentPacketLen;
-            short packetOffset = 0;
-            byte[] txBuffer = new byte[headerLen+packetLen];
+            int packetOffset = 0;
+            byte[] txBuffer = new byte[headerLen+packetLen+delimiterLen];
             long frameId = frameCount;  //The ID number(counter) of the current frame(all picture)
 
-            currentPacketLen = (short) packetLen;
-            packetsNumber = (byte)(Math.floor(frameSize/packetLen) + frameSize%packetLen==0?0:1);
-            lastPacketLen = (short)(frameSize - packetLen*(packetsNumber-1));
+
+            currentPacketLen = (short) (packetLen);
+            packetsNumber = (short)((frameSize/packetLen) + (frameSize%packetLen==0?0:1));
+            lastPacketLen = (short)(frameSize - packetLen*((int)(packetsNumber)-1));
 
             while(packetId<packetsNumber){
                 if(packetId == packetsNumber-1) currentPacketLen = lastPacketLen;
 
-                packetOffset = (short)(packetId*packetLen);
+                packetOffset = packetId*packetLen;
                 //Header construction
-                txBuffer[0] = 0;    //Image type
-                txBuffer[1] = (byte)(frameId>>24 & 0xff);
-                txBuffer[2] = (byte)(frameId>>16 & 0xff);
-                txBuffer[3] = (byte)(frameId>>8 & 0xff);
-                txBuffer[4] = (byte)(frameId & 0xff);
-                txBuffer[5] = (byte)(frameSize>>24 & 0xff);
-                txBuffer[6] = (byte)(frameSize>>16 & 0xff);
-                txBuffer[7] = (byte)(frameSize>>8 & 0xff);
-                txBuffer[8] = (byte)(frameSize & 0xff);
-                txBuffer[9] = packetsNumber;
-                txBuffer[10] = packetId;
-                txBuffer[11] = (byte)(packetLen>>8 & 0xff);
-                txBuffer[12] = (byte)(packetLen & 0xff);
-                txBuffer[13] = (byte)(currentPacketLen>>8 & 0xff);
-                txBuffer[14] = (byte)(currentPacketLen & 0xff);
+                txBuffer[0] = imageType;    //Image type
+                txBuffer[1] = (byte)(frameId & 0xff);
+                txBuffer[2] = (byte)(frameId>>8 & 0xff);
+                txBuffer[3] = (byte)(frameId>>16 & 0xff);
+                txBuffer[4] = (byte)(frameId>>24 & 0xff);
+                txBuffer[5] = (byte)(frameSize & 0xff);
+                txBuffer[6] = (byte)(frameSize>>8 & 0xff);
+                txBuffer[7] = (byte)(frameSize>>16 & 0xff);
+                txBuffer[8] = (byte)(frameSize>>24 & 0xff);
+                txBuffer[9] = (byte)packetsNumber;
+                txBuffer[10] = (byte)packetId;
+                txBuffer[11] = (byte)(packetLen & 0xff);
+                txBuffer[12] = (byte)(packetLen>>8 & 0xff);
+                txBuffer[13] = (byte)(currentPacketLen & 0xff);
+                txBuffer[14] = (byte)(currentPacketLen>>8 & 0xff);
                 txBuffer[15] = (byte) localFrameId;
 
-                // Data
-                memcpy(&txBuffer[PACKETHEADERLEN], frame + packetOffset, currentPacketLen);
 
+                // Delimiters for new frame and packets
+                if(packetId == -1){
+                    txBuffer[16] = 10;
+                    txBuffer[17] = 10;
+                    txBuffer[18] = 5;
+                    txBuffer[19] = 10;
+                    txBuffer[20] = 10;
+                }
+                else {
+                    txBuffer[16] = 5;
+                    txBuffer[17] = 50;
+                    txBuffer[18] = 5;
+                    txBuffer[19] = 50;
+                    txBuffer[20] = 50;
+                }
+
+                System.arraycopy( frame, packetOffset, txBuffer, headerLen+delimiterLen, currentPacketLen);
+
+                DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+packetLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                try {
+                    phoneSocketSendDataTest.send(dp);
+                }catch (Exception e){
+                    Log.d("Myti", "Exception server not ip for client");
+                    e.printStackTrace();
+                }
+
+
+                packetId++;
             }
 
-            DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+packetLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
-            try {
-                phoneSocketSendDataTest.send(dp);
-            }catch (Exception e){
-                Log.d("Myti", "Exception server not ip for client");
-                e.printStackTrace();
-            }
 
         }
 

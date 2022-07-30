@@ -63,7 +63,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         } catch (UnknownHostException e) {
             e.printStackTrace();
         }
-        communicationReceiveThread = (new Streaming()).new CommunicationReceiveThread(findViewById(R.id.imageView));
+        communicationReceiveThread = (new Streaming()).new CommunicationReceiveThread(findViewById(R.id.imageView),this);
         communicationSendThread = (new Streaming()).new TestSendDataCommunicationThread(findViewById(R.id.imageView), localIPAddress, this);
     }
 
