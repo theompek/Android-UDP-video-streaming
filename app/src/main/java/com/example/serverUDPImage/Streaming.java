@@ -28,14 +28,14 @@ public class Streaming {
     public class CommunicationReceiveThread implements Runnable {
         public DatagramSocket phoneSocket;
         public int phonePort;
-        byte headerLen = 20;
-        byte  checksumBytesNum = 4;
+        byte headerLen = 17;
         int datagramPacketLength = 1024;
         byte[] startFrameDelimiter = {10, 10, 5, 10, 10};
         byte[] startPacketDelimiter = {5, 50, 5, 50, 50};
         private byte buf[] = new byte[datagramPacketLength];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
         int checkSum = 0;
+        int checkSumAdd = 0;
         Queue<FrameReceivedObject> imagesQueue = new LinkedList<>();
         int lastFrameInQueue = -1;
         FrameReceivedObject[] imagesObj = new FrameReceivedObject[maxImagesStored];
@@ -124,7 +124,7 @@ public class Streaming {
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
                     //and 4, 5, 6, 7 ,8 number of 1 means audio type.
-                    packetType = Integer.bitCount(header[0]) > 3 ? audioType : imageType;
+                    receivedCheckSum = header[0] & 0xff;
                     frameId = ((header[4] & 0x00ff) << 24) | ((header[3] & 0x00ff) << 16) |
                             ((header[2] & 0x00ff) << 8) | (header[1] & 0xff);
                     frameSize = ((header[8] & 0x00ff) << 24) | ((header[7] & 0x00ff) << 16) |
@@ -133,28 +133,36 @@ public class Streaming {
                     packetId = (header[10] & 0xff);
                     packetSize = ((header[14] & 0xff) << 8) | (header[13] & 0xff);  //Δεν χρειάζεται, θα είναι fix 1024bytes για όλα τα πακέτα
                     localFrameId = (header[15] & 0xff);
-                    receivedCheckSum = ((header[19] & 0x00ff) << 24) | ((header[18] & 0x00ff) << 16) |
-                            ((header[17] & 0x00ff) << 8) | (header[16] & 0xff);
+                    packetType = Integer.bitCount(header[16]) > 3 ? audioType : imageType;
                     /*if(packetId == packetsNumber)
                     {
 
                     }*/
+
+                    //Calculate checksum
+                    checkSum = 0;
+                    for(int byteI=1;byteI< (headerLen+delimiterLength+currentPacketLength) ;byteI++){
+                        checkSum+= Byte.toUnsignedInt(datagramData[byteI]);
+                    }
+                    // Add all checksum bytes
+                    checkSumAdd = (checkSum & 0xff)+(checkSum>>8 & 0xff) + (checkSum>>16 & 0xff)+ (checkSum>>24 & 0xff);
+                    while((checkSumAdd>>8 & 0xff)!=0b00000000)
+                        checkSumAdd = (checkSumAdd & 0xff) + (checkSumAdd>>8 & 0xff);
+
                     if (localFrameId >= maxImagesStored || localFrameId < 0) {
                         //The other values from the header can be used so as the frame be restored, for example we
                         //can compare the values frameId or packetId or frameSize with the values of the store frameObject and find
                         //the right location of the packet, for the moment we just skip this step and we implement this in the future
                         continue;
                     }
-                    if (imagesObj[localFrameId].compareHeaders(header) != 0) continue;
-                    //Calculate checksum
-                    checkSum = 0;
-                    for(int byteI=headerLen;byteI< (headerLen+delimiterLength+currentPacketLength) ;byteI++){
-                        checkSum+= Byte.toUnsignedInt(datagramData[byteI]);
-                    }
-                    for(int byteI=0;byteI< headerLen-checksumBytesNum ;byteI++){
-                        checkSum+= Byte.toUnsignedInt(datagramData[byteI]);
-                    }
 
+                    //If the current received packet is from an old frame and we have in the queue
+                    //a newer frame then we can skip this packet
+                    if (frameId < lastFrameInQueue) continue;
+
+                    //If the localFrameId is corrupted or the header is from other frame then skip
+                    if (imagesObj[localFrameId].compareHeaders(header) != 0) continue;
+                    
                     imagesObj[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
                     imagesObj[localFrameId].addDataToBuffer(currentPacketData, currentPacketLength, packetId);
 
@@ -367,7 +375,7 @@ public class Streaming {
         private Context context;
         public DatagramSocket phoneSocketSendDataTest;
         public int phonePortSendDataTest;
-        byte headerLen = 20 ;
+        byte headerLen = 17 ;
         int packetLen = packetsLength;
         //private byte buf[] = new byte[packetLen + headerLen];
         //private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
@@ -459,6 +467,7 @@ public class Streaming {
             int frameId = frameCount;  //The ID number(counter) of the current frame(all picture)
             short checkSumsLen = 256;
             int checkSum = 0;
+            int checkSumAdd = 0;
 
 
             currentPacketLen = (short) (packetLen);
@@ -475,7 +484,6 @@ public class Streaming {
                 System.arraycopy( frame, packetOffset, txBuffer, headerLen+delimiterLen, currentPacketLen);
 
                 //Header construction
-                txBuffer[0] = imageType;    //Image type
                 txBuffer[1] = (byte)(frameId & 0xff);
                 txBuffer[2] = (byte)(frameId>>8 & 0xff);
                 txBuffer[3] = (byte)(frameId>>16 & 0xff);
@@ -491,35 +499,35 @@ public class Streaming {
                 txBuffer[13] = (byte)(currentPacketLen & 0xff);
                 txBuffer[14] = (byte)(currentPacketLen>>8 & 0xff);
                 txBuffer[15] = (byte) localFrameId;
-
+                txBuffer[16] = imageType;    //Image type
                 // Delimiters for new frame and packets
                 if(packetId == -1){
+                    txBuffer[17] = 10;
+                    txBuffer[18] = 10;
+                    txBuffer[19] = 5;
                     txBuffer[20] = 10;
                     txBuffer[21] = 10;
-                    txBuffer[22] = 5;
-                    txBuffer[23] = 10;
-                    txBuffer[24] = 10;
                 }
                 else {
-                    txBuffer[20] = 5;
+                    txBuffer[17] = 5;
+                    txBuffer[18] = 50;
+                    txBuffer[19] = 5;
+                    txBuffer[20] = 50;
                     txBuffer[21] = 50;
-                    txBuffer[22] = 5;
-                    txBuffer[23] = 50;
-                    txBuffer[24] = 50;
                 }
 
 
                 //Calculate checkSums
                 checkSum = 0;
-                for(int byteI=0;byteI< (headerLen+delimiterLen+currentPacketLen) ;byteI++){
-                    checkSum+= Byte.toUnsignedInt(txBuffer[byteI]);
+                for(int byteI=1;byteI< (headerLen+delimiterLen+currentPacketLen) ;byteI++) {
+                    checkSum += Byte.toUnsignedInt(txBuffer[byteI]);
                 }
-
+                // Add all checksum bytes
+                checkSumAdd = (checkSum & 0xff)+(checkSum>>8 & 0xff) + (checkSum>>16 & 0xff)+ (checkSum>>24 & 0xff);
+                while((checkSumAdd>>8 & 0xff)!=0b00000000)
+                    checkSumAdd = (checkSumAdd & 0xff) + (checkSumAdd>>8 & 0xff);
                 //Store the checkSum into header
-                txBuffer[16] = (byte)(checkSum & 0xff);
-                txBuffer[17] = (byte)(checkSum>>8 & 0xff);
-                txBuffer[18] = (byte)(checkSum>>16 & 0xff);
-                txBuffer[19] = (byte)(checkSum>>24 & 0xff);
+                txBuffer[0] = (byte)(checkSumAdd & 0xff);
 
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 try {
