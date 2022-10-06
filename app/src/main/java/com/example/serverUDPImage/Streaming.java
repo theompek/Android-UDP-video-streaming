@@ -23,19 +23,20 @@ import java.util.Queue;
 
 public class Streaming {
     int packetsLength = 920;
+    int datagramPacketLength = 1024;
     byte maxImagesStored = 100;
+    byte headerLen = 21;
 
     public class CommunicationReceiveThread implements Runnable {
         public DatagramSocket phoneSocket;
         public int phonePort;
-        byte headerLen = 17;
-        int datagramPacketLength = 1024;
         byte[] startFrameDelimiter = {10, 10, 5, 10, 10};
         byte[] startPacketDelimiter = {5, 50, 5, 50, 50};
         private byte buf[] = new byte[datagramPacketLength];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
-        int checkSum = 0;
-        int checkSumAdd = 0;
+        int checkSum[] = {0, 0, 0, 0};
+        int checkSumAdd[] = {0, 0, 0, 0};
+        int checkSumStep = (int) Math.floor(datagramPacketLength/4);
         Queue<FrameReceivedObject> imagesQueue = new LinkedList<>();
         int lastFrameInQueue = -1;
         FrameReceivedObject[] imagesObj = new FrameReceivedObject[maxImagesStored];
@@ -57,7 +58,7 @@ public class Streaming {
         int frameSize;
         int localFrameId;
         int prevLocalFrameId = 0;
-        int receivedCheckSum = 0;
+        int receivedCheckSum[] = {0, 0, 0, 0};
         ImageView imageView;
         Activity mainActivity;
         InetAddress esp32Ip;
@@ -124,7 +125,6 @@ public class Streaming {
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
                     //and 4, 5, 6, 7 ,8 number of 1 means audio type.
-                    receivedCheckSum = header[0] & 0xff;
                     frameId = ((header[4] & 0x00ff) << 24) | ((header[3] & 0x00ff) << 16) |
                             ((header[2] & 0x00ff) << 8) | (header[1] & 0xff);
                     frameSize = ((header[8] & 0x00ff) << 24) | ((header[7] & 0x00ff) << 16) |
@@ -134,20 +134,34 @@ public class Streaming {
                     packetSize = ((header[14] & 0xff) << 8) | (header[13] & 0xff);  //Δεν χρειάζεται, θα είναι fix 1024bytes για όλα τα πακέτα
                     localFrameId = (header[15] & 0xff);
                     packetType = Integer.bitCount(header[16]) > 3 ? audioType : imageType;
+
+                    receivedCheckSum[0] = header[headerLen-4] & 0xff;
+                    receivedCheckSum[1] = header[headerLen-3] & 0xff;
+                    receivedCheckSum[2] = header[headerLen-2] & 0xff;
+                    receivedCheckSum[3] = header[headerLen-1] & 0xff;
                     /*if(packetId == packetsNumber)
                     {
 
                     }*/
 
                     //Calculate checksum
-                    checkSum = 0;
-                    for(int byteI=1;byteI< (headerLen+delimiterLength+currentPacketLength) ;byteI++){
-                        checkSum+= Byte.toUnsignedInt(datagramData[byteI]);
+                    datagramData[headerLen-4] = 0;
+                    datagramData[headerLen-3] = 0;
+                    datagramData[headerLen-2] = 0;
+                    datagramData[headerLen-1] = 0;
+                    for(int j=0;j<4;j++) {
+                        checkSum[j] =0;
+                        int endPos = (j+1)*checkSumStep;
+                        if (j==3) endPos = datagramPacketLength;
+                        for (int byteI = j*checkSumStep; byteI < endPos; byteI++) {
+                            checkSum[j] += Byte.toUnsignedInt(datagramData[byteI]);
+                        }
+
+                        // Add all checksum bytes
+                        checkSumAdd[j] = (checkSum[j] & 0xff) + (checkSum[j] >> 8 & 0xff) + (checkSum[j] >> 16 & 0xff) + (checkSum[j] >> 24 & 0xff);
+                        while ((checkSumAdd[j] >> 8 & 0xff) != 0b00000000)
+                            checkSumAdd[j] = (checkSumAdd[j] & 0xff) + (checkSumAdd[j] >> 8 & 0xff);
                     }
-                    // Add all checksum bytes
-                    checkSumAdd = (checkSum & 0xff)+(checkSum>>8 & 0xff) + (checkSum>>16 & 0xff)+ (checkSum>>24 & 0xff);
-                    while((checkSumAdd>>8 & 0xff)!=0b00000000)
-                        checkSumAdd = (checkSumAdd & 0xff) + (checkSumAdd>>8 & 0xff);
 
                     if (localFrameId >= maxImagesStored || localFrameId < 0) {
                         //The other values from the header can be used so as the frame be restored, for example we
@@ -375,7 +389,6 @@ public class Streaming {
         private Context context;
         public DatagramSocket phoneSocketSendDataTest;
         public int phonePortSendDataTest;
-        byte headerLen = 17 ;
         int packetLen = packetsLength;
         //private byte buf[] = new byte[packetLen + headerLen];
         //private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
@@ -457,17 +470,19 @@ public class Streaming {
         public void sendDataUdp(byte[] frame, int frameSize, int frameCount, byte localFrameId) {
 
             byte delimiterLen = 5;
-            int totalDatagramLength = headerLen+packetLen+delimiterLen;
             short packetsNumber = 0;  //The number of packets after splitting all the frame
             short packetId = 0;       //The ID number(counter) of the current packet
             short lastPacketLen = 0;     //The last packet has usually smaller length than other because is truncated
             short currentPacketLen;
             int packetOffset = 0;
-            byte[] txBuffer = new byte[totalDatagramLength];
+            byte[] txBuffer = new byte[datagramPacketLength];
             int frameId = frameCount;  //The ID number(counter) of the current frame(all picture)
-            short checkSumsLen = 256;
-            int checkSum = 0;
-            int checkSumAdd = 0;
+            //short checkSumsLen = 256;
+            int checkSum[] = {0, 0, 0, 0};
+            int checkSumAdd[] = {0, 0, 0, 0};
+            int checkSumStep = (int) Math.floor(datagramPacketLength/4);
+
+
 
 
             currentPacketLen = (short) (packetLen);
@@ -498,36 +513,47 @@ public class Streaming {
                 txBuffer[12] = (byte)(packetLen>>8 & 0xff);
                 txBuffer[13] = (byte)(currentPacketLen & 0xff);
                 txBuffer[14] = (byte)(currentPacketLen>>8 & 0xff);
-                txBuffer[15] = (byte) localFrameId;
+                txBuffer[15] = localFrameId;
                 txBuffer[16] = imageType;    //Image type
+                txBuffer[17] = 0;
+                txBuffer[18] = 0;
+                txBuffer[19] = 0;
+                txBuffer[20] = 0;
                 // Delimiters for new frame and packets
                 if(packetId == -1){
-                    txBuffer[17] = 10;
-                    txBuffer[18] = 10;
-                    txBuffer[19] = 5;
-                    txBuffer[20] = 10;
                     txBuffer[21] = 10;
+                    txBuffer[22] = 10;
+                    txBuffer[23] = 5;
+                    txBuffer[24] = 10;
+                    txBuffer[25] = 10;
                 }
                 else {
-                    txBuffer[17] = 5;
-                    txBuffer[18] = 50;
-                    txBuffer[19] = 5;
-                    txBuffer[20] = 50;
-                    txBuffer[21] = 50;
+                    txBuffer[21] = 5;
+                    txBuffer[22] = 50;
+                    txBuffer[23] = 5;
+                    txBuffer[24] = 50;
+                    txBuffer[25] = 50;
                 }
 
 
                 //Calculate checkSums
-                checkSum = 0;
-                for(int byteI=1;byteI< (headerLen+delimiterLen+currentPacketLen) ;byteI++) {
-                    checkSum += Byte.toUnsignedInt(txBuffer[byteI]);
+                for(int j=0;j<4;j++) {
+                    checkSum[j] = 0;
+                    int endPos = (j+1)*checkSumStep;
+                    if (j==3) endPos = datagramPacketLength;
+                    for (int byteI = j*checkSumStep; byteI < endPos; byteI++) {
+                        checkSum[j] += Byte.toUnsignedInt(txBuffer[byteI]);
+                    }
+                    // Add all checksum bytes
+                    checkSumAdd[j] = (checkSum[j] & 0xff) + (checkSum[j] >> 8 & 0xff) + (checkSum[j] >> 16 & 0xff) + (checkSum[j] >> 24 & 0xff);
+                    while ((checkSumAdd[j] >> 8 & 0xff) != 0b00000000)
+                        checkSumAdd[j] = (checkSumAdd[j] & 0xff) + (checkSumAdd[j] >> 8 & 0xff);
                 }
-                // Add all checksum bytes
-                checkSumAdd = (checkSum & 0xff)+(checkSum>>8 & 0xff) + (checkSum>>16 & 0xff)+ (checkSum>>24 & 0xff);
-                while((checkSumAdd>>8 & 0xff)!=0b00000000)
-                    checkSumAdd = (checkSumAdd & 0xff) + (checkSumAdd>>8 & 0xff);
+
                 //Store the checkSum into header
-                txBuffer[0] = (byte)(checkSumAdd & 0xff);
+                for(int j=0;j<4;j++) {
+                    txBuffer[headerLen-4 + j] = (byte) (checkSumAdd[j] & 0xff);
+                }
 
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 try {
