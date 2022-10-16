@@ -8,6 +8,7 @@ import android.os.Environment;
 import android.util.Log;
 import android.widget.ImageView;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
 import java.io.ByteArrayOutputStream;
@@ -22,10 +23,11 @@ import java.util.LinkedList;
 import java.util.Queue;
 
 public class Streaming {
-    int packetsLength = 920;
+    int packetsDataLength = 920;
     int datagramPacketLength = 1024;
     byte maxImagesStored = 100;
     byte headerLen = 21;
+    int NumOfChkSums = 4;
 
     public class CommunicationReceiveThread implements Runnable {
         public DatagramSocket phoneSocket;
@@ -34,15 +36,13 @@ public class Streaming {
         byte[] startPacketDelimiter = {5, 50, 5, 50, 50};
         private byte buf[] = new byte[datagramPacketLength];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
-        int checkSum[] = {0, 0, 0, 0};
-        int checkSumAdd[] = {0, 0, 0, 0};
-        int checkSumStep = (int) Math.floor(datagramPacketLength/4);
+
         Queue<FrameReceivedObject> imagesQueue = new LinkedList<>();
-        int lastFrameInQueue = -1;
-        FrameReceivedObject[] imagesObj = new FrameReceivedObject[maxImagesStored];
+        int lastCompletedFrameInQueue = -1;
+        FrameReceivedObject[] FramesBuffer = new FrameReceivedObject[maxImagesStored];
 
         byte[] currentPacketData = new byte[10000];
-        byte[] datagramData;
+        byte[] datagramData = new byte[1];;
         boolean searchFrame = false;
         int frStart;
         int delimiterLength;
@@ -58,7 +58,9 @@ public class Streaming {
         int frameSize;
         int localFrameId;
         int prevLocalFrameId = 0;
-        int receivedCheckSum[] = {0, 0, 0, 0};
+        int receivedCheckSum[] = new int[NumOfChkSums];
+        byte checkSums[] = new byte[NumOfChkSums];
+        boolean currentFrameIsBroken = false;
         ImageView imageView;
         Activity mainActivity;
         InetAddress esp32Ip;
@@ -72,10 +74,10 @@ public class Streaming {
                 esp32Port = 8000;
                 esp32Ip = InetAddress.getByName("192.168.2.180");
                 for(int i=0;i<maxImagesStored;i++){
-                    imagesObj[i]=new FrameReceivedObject();
+                    FramesBuffer[i]=new FrameReceivedObject();
                 }
             } catch (IOException e) {
-                Log.e("Myti", "Exception in photoCallback", e);
+                Log.e("Myti", "Exception in CommunicationReceiveThread : ", e);
             }
             this.imageView = imageView;
             this.mainActivity = mainActivity;
@@ -104,6 +106,8 @@ public class Streaming {
 
                 Log.d("Myti", "Get data");
                 try {
+                    // Initialize array
+                    Arrays.fill(datagramData, (byte) 0);
                     phoneSocket.receive(phoneDpReceive);
                     datagramData = phoneDpReceive.getData();
                     //Find frame start
@@ -119,8 +123,8 @@ public class Streaming {
                         delimiterLength = startPacketDelimiter.length;
                     }
 
-                    currentPacketLength = phoneDpReceive.getLength() - frStart - delimiterLength;
-                    System.arraycopy(datagramData, frStart + delimiterLength, currentPacketData, 0, currentPacketLength);
+                    /*currentPacketLength = phoneDpReceive.getLength() - frStart - delimiterLength;
+                    System.arraycopy(datagramData, frStart + delimiterLength, currentPacketData, 0, currentPacketLength);*/
                     header = Arrays.copyOfRange(datagramData, frStart - headerLen, headerLen);
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
@@ -135,33 +139,7 @@ public class Streaming {
                     localFrameId = (header[15] & 0xff);
                     packetType = Integer.bitCount(header[16]) > 3 ? audioType : imageType;
 
-                    receivedCheckSum[0] = header[headerLen-4] & 0xff;
-                    receivedCheckSum[1] = header[headerLen-3] & 0xff;
-                    receivedCheckSum[2] = header[headerLen-2] & 0xff;
-                    receivedCheckSum[3] = header[headerLen-1] & 0xff;
-                    /*if(packetId == packetsNumber)
-                    {
-
-                    }*/
-
-                    //Calculate checksum
-                    datagramData[headerLen-4] = 0;
-                    datagramData[headerLen-3] = 0;
-                    datagramData[headerLen-2] = 0;
-                    datagramData[headerLen-1] = 0;
-                    for(int j=0;j<4;j++) {
-                        checkSum[j] =0;
-                        int endPos = (j+1)*checkSumStep;
-                        if (j==3) endPos = datagramPacketLength;
-                        for (int byteI = j*checkSumStep; byteI < endPos; byteI++) {
-                            checkSum[j] += Byte.toUnsignedInt(datagramData[byteI]);
-                        }
-
-                        // Add all checksum bytes
-                        checkSumAdd[j] = (checkSum[j] & 0xff) + (checkSum[j] >> 8 & 0xff) + (checkSum[j] >> 16 & 0xff) + (checkSum[j] >> 24 & 0xff);
-                        while ((checkSumAdd[j] >> 8 & 0xff) != 0b00000000)
-                            checkSumAdd[j] = (checkSumAdd[j] & 0xff) + (checkSumAdd[j] >> 8 & 0xff);
-                    }
+                    currentFrameIsBroken = false;
 
                     if (localFrameId >= maxImagesStored || localFrameId < 0) {
                         //The other values from the header can be used so as the frame be restored, for example we
@@ -171,28 +149,54 @@ public class Streaming {
                     }
 
                     //If the current received packet is from an old frame and we have in the queue
-                    //a newer frame then we can skip this packet
-                    if (frameId < lastFrameInQueue) continue;
+                    //a newer completed frame then we can skip this packet because we have already show
+                    //a newer one frame
+                    if (frameId < lastCompletedFrameInQueue) continue;
 
                     //If the localFrameId is corrupted or the header is from other frame then skip
-                    if (imagesObj[localFrameId].compareHeaders(header) != 0) continue;
-                    
-                    imagesObj[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
-                    imagesObj[localFrameId].addDataToBuffer(currentPacketData, currentPacketLength, packetId);
+                    if (FramesBuffer[localFrameId].compareHeaders(frameId, frameSize, packetsNumber, localFrameId) != 0) {
+                        //FramesBuffer[localFrameId].initiateFrame(); //Broken Frame
+                        continue;
+                    }
 
-                    if (imagesObj[localFrameId].frameFilled() && lastFrameInQueue < frameId) {
-                        lastFrameInQueue = frameId;
-                        imagesQueue.add(imagesObj[localFrameId].clone());
+
+                    //Check the CheckSum to insure the integrity of the data
+                    for (int i=0;i<NumOfChkSums;i++) {
+                        //Get received checkSums
+                        receivedCheckSum[i] = datagramData[headerLen - NumOfChkSums + i];
+
+                        //Set to zero the checkSum fields and calculate the checksum of the current packet
+                        datagramData[headerLen - NumOfChkSums + i] = 0;
+                    }
+
+                    checkSums = CalcCheckSums(datagramData, NumOfChkSums, frStart + delimiterLength +packetSize);
+
+
+                    for (int i=0;i<NumOfChkSums;i++) {
+                        if (checkSums[i] != receivedCheckSum[i]) currentFrameIsBroken= true;
+                    }
+
+                    if (currentFrameIsBroken) {
+                        continue;
+                    }
+
+                    System.arraycopy(datagramData, frStart + delimiterLength, currentPacketData, 0, packetSize);
+                    //FramesBuffer[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
+                    FramesBuffer[localFrameId].addDataToBuffer(currentPacketData, packetSize, packetId);
+
+                    if (FramesBuffer[localFrameId].frameIsFilled()) {
+                        lastCompletedFrameInQueue = frameId;
+                        imagesQueue.add(FramesBuffer[localFrameId].clone());
                         //Clear the frames buffer which are between 2 consecutive completed frames
                         if (localFrameId >= prevLocalFrameId) {
                             for (int i = prevLocalFrameId; i <= localFrameId; i++)
-                                imagesObj[i].initiateFrame();
+                                FramesBuffer[i].initiateFrame();
                         } else {
                             for (int i = prevLocalFrameId; i < maxImagesStored; i++)
-                                imagesObj[i].initiateFrame();
+                                FramesBuffer[i].initiateFrame();
 
                             for (int i = 0; i < localFrameId; i++)
-                                imagesObj[i].initiateFrame();
+                                FramesBuffer[i].initiateFrame();
                         }
                         prevLocalFrameId = localFrameId;
 
@@ -212,9 +216,11 @@ public class Streaming {
                             try {
                                 FileOutputStream fos = new FileOutputStream(photo.getPath());
 
+                                /*
                                 fos.write(Arrays.copyOfRange(imgObj.buffer, 0, imgObj.frameSize));
                                 String s = String.valueOf(fos.getChannel().size());
                                 fos.close();
+                                */
 
                                 Bitmap bitmap = BitmapFactory.decodeByteArray(imgObj.buffer, 0, imgObj.frameSize);
                                 Log.d("Myti", "frameSize " + frameSize);
@@ -283,20 +289,16 @@ public class Streaming {
         int frameId = -1;
         int frameSize = -1;
         int localFrameId = -1;
+        boolean frameIsBroken = false;
+        boolean skipThisFrame = false;
 
-        public byte compareHeaders(byte[] header) {
-            int crnFrameId = ((header[4] & 0x00ff) << 24) | ((header[3] & 0x00ff) << 16) |
-                    ((header[2] & 0x00ff) << 8) | (header[1] & 0xff);
-            int crnFrameSize = ((header[8] & 0x00ff) << 24) | ((header[7] & 0x00ff) << 16) |
-                    ((header[6] & 0x00ff) << 8) | (header[5] & 0xff);
-            int crnPacketsNumber = header[9] & 0xff;
-            //packetId = (header[10]& 0xff) ;
-            int crnLocalFrameId = (header[15] & 0xff);
+        /*Compare the headers */
+        public byte compareHeaders(int crnFrameId, int crnFrameSize, int crnPacketsNumber, int crnLocalFrameId) {
 
             if (frameId == -1) {
                 frameId = crnFrameId;
             } else if (frameId != crnFrameId) {
-                initiateFrame();
+                //initiateFrame();
                 return 1;
             }
 
@@ -304,7 +306,7 @@ public class Streaming {
                 if (crnFrameSize < maxObjectLength) {
                     frameSize = crnFrameSize;
                 } else {
-                    initiateFrame();
+                    //initiateFrame();
                     return 5;
                 }
             } else if (frameSize != crnFrameSize) {
@@ -312,10 +314,10 @@ public class Streaming {
             }
 
             if (packetsNumber == -1) {
-                if (crnPacketsNumber * packetsLength < maxObjectLength) {
+                if (crnPacketsNumber * packetsDataLength < maxObjectLength) {
                     packetsNumber = crnPacketsNumber;
                 } else {
-                    initiateFrame();
+                    //initiateFrame();
                     return 6;
                 }
             } else if (packetsNumber != crnPacketsNumber) {
@@ -326,30 +328,28 @@ public class Streaming {
                 if (crnLocalFrameId < maxImagesStored && crnLocalFrameId >= 0) {
                     localFrameId = crnLocalFrameId;
                 } else {
-                    initiateFrame();
+                    //initiateFrame();
                     return 7;
                 }
             } else if (localFrameId != crnLocalFrameId) {
                 return 4;
             }
 
-            //Same headers
+            /* Same headers */
             return 0;
         }
 
         public byte  addDataToBuffer(byte[] packetData, int packetLength, int packetId) {
-            if (packetId * packetsLength + packetLength > maxObjectLength /*|| packetLength != packetsLength*/)
+            if (packetId * packetsDataLength + packetLength > maxObjectLength /*|| packetLength != packetsDataLength*/)
                 return 0;
-            System.arraycopy(packetData, 0, buffer, packetId * packetsLength, packetLength);
+            System.arraycopy(packetData, 0, buffer, packetId * packetsDataLength, packetLength);
             objLength += packetLength;
             packetsNumberCounter++;
             return 1;
         }
 
-        public boolean frameFilled() {
-            if (objLength >= frameSize || packetsNumberCounter>=packetsNumber) return true;
-
-            return false;
+        public boolean frameIsFilled() {
+            return objLength >= frameSize || packetsNumberCounter >= packetsNumber;
         }
 
         public void initiateFrame() {
@@ -359,6 +359,9 @@ public class Streaming {
             frameSize = -1;
             packetsNumberCounter=0;
             localFrameId = -1;
+            frameIsBroken = false;
+            skipThisFrame = false;
+
         }
 
         public void initiateFrame(int packetsNumber, int frameId, int frameSize, int localFrameId) {
@@ -370,6 +373,8 @@ public class Streaming {
             }
         }
 
+        @NonNull
+        @Override
         public FrameReceivedObject clone(){
             FrameReceivedObject objCopy = new FrameReceivedObject();
             System.arraycopy(this.buffer, 0, objCopy.buffer, 0, this.buffer.length);
@@ -379,6 +384,8 @@ public class Streaming {
             objCopy.frameId = this.frameId;
             objCopy.frameSize = this.frameSize;
             objCopy.localFrameId = this.localFrameId;
+            objCopy.frameIsBroken = this.frameIsBroken;
+            objCopy.skipThisFrame = this.skipThisFrame;
             return objCopy;
         }
 
@@ -389,10 +396,11 @@ public class Streaming {
         private Context context;
         public DatagramSocket phoneSocketSendDataTest;
         public int phonePortSendDataTest;
-        int packetLen = packetsLength;
-        //private byte buf[] = new byte[packetLen + headerLen];
-        //private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
-        //File root = Environment.getExternalStorageDirectory();
+        /*
+        private byte buf[] = new byte[packetLen + headerLen];
+        private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
+        File root = Environment.getExternalStorageDirectory();
+        */
 
         int maxImageSize = 200000;
         byte[][] imageAll = new byte[2][maxImageSize];
@@ -425,7 +433,7 @@ public class Streaming {
                     new Thread(new Runnable() {
                         @Override
                         public void run() {
-                            byte dataImages[][] = new byte[3][];
+                            byte[][] dataImages = new byte[3][];
                             int frameCount = 0;
                             byte localFrameId = 0;
 
@@ -443,7 +451,8 @@ public class Streaming {
                                             bMap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
                                             dataImages[i] = baos.toByteArray();
 
-                                            Thread.sleep(32); //31.25 fps for 32 milliseconds intervals
+                                            //Thread.sleep(32); //31.25 fps for 32 milliseconds intervals
+                                            Thread.sleep(320); // ~3fps
 
                                             sendDataUdp(dataImages[i], dataImages[i].length, frameCount, localFrameId);
                                             frameCount++;
@@ -473,30 +482,25 @@ public class Streaming {
             short packetsNumber = 0;  //The number of packets after splitting all the frame
             short packetId = 0;       //The ID number(counter) of the current packet
             short lastPacketLen = 0;     //The last packet has usually smaller length than other because is truncated
-            short currentPacketLen;
+            short currentPacketDataLen;
             int packetOffset = 0;
             byte[] txBuffer = new byte[datagramPacketLength];
             int frameId = frameCount;  //The ID number(counter) of the current frame(all picture)
             //short checkSumsLen = 256;
-            int checkSum[] = {0, 0, 0, 0};
-            int checkSumAdd[] = {0, 0, 0, 0};
-            int checkSumStep = (int) Math.floor(datagramPacketLength/4);
+            byte checkSum[] = {0, 0, 0, 0};
 
-
-
-
-            currentPacketLen = (short) (packetLen);
-            packetsNumber = (short)((frameSize/packetLen) + (frameSize%packetLen==0?0:1));
-            lastPacketLen = (short)(frameSize - packetLen*((int)(packetsNumber)-1));
+            currentPacketDataLen = (short) (packetsDataLength);
+            packetsNumber = (short)((frameSize/packetsDataLength) + (frameSize%packetsDataLength==0?0:1));
+            lastPacketLen = (short)(frameSize - packetsDataLength*((int)(packetsNumber)-1));
 
             while(packetId<packetsNumber){
-                if(packetId == packetsNumber-1) currentPacketLen = lastPacketLen;
+                if(packetId == packetsNumber-1) currentPacketDataLen = lastPacketLen;
 
-                packetOffset = packetId*packetLen;
+                packetOffset = packetId*packetsDataLength;
                 // Initialize array
                 Arrays.fill(txBuffer, (byte) 0);
                 //Copy the piece of frame into txBuffer
-                System.arraycopy( frame, packetOffset, txBuffer, headerLen+delimiterLen, currentPacketLen);
+                System.arraycopy( frame, packetOffset, txBuffer, headerLen+delimiterLen, currentPacketDataLen);
 
                 //Header construction
                 txBuffer[1] = (byte)(frameId & 0xff);
@@ -509,12 +513,13 @@ public class Streaming {
                 txBuffer[8] = (byte)(frameSize>>24 & 0xff);
                 txBuffer[9] = (byte)packetsNumber;
                 txBuffer[10] = (byte)packetId;
-                txBuffer[11] = (byte)(packetLen & 0xff);
-                txBuffer[12] = (byte)(packetLen>>8 & 0xff);
-                txBuffer[13] = (byte)(currentPacketLen & 0xff);
-                txBuffer[14] = (byte)(currentPacketLen>>8 & 0xff);
+                txBuffer[11] = (byte)(packetsDataLength & 0xff);
+                txBuffer[12] = (byte)(packetsDataLength>>8 & 0xff);
+                txBuffer[13] = (byte)(currentPacketDataLen & 0xff);
+                txBuffer[14] = (byte)(currentPacketDataLen>>8 & 0xff);
                 txBuffer[15] = localFrameId;
                 txBuffer[16] = imageType;    //Image type
+                //CheckSum set to zero
                 txBuffer[17] = 0;
                 txBuffer[18] = 0;
                 txBuffer[19] = 0;
@@ -535,27 +540,16 @@ public class Streaming {
                     txBuffer[25] = 50;
                 }
 
-
                 //Calculate checkSums
-                for(int j=0;j<4;j++) {
-                    checkSum[j] = 0;
-                    int endPos = (j+1)*checkSumStep;
-                    if (j==3) endPos = datagramPacketLength;
-                    for (int byteI = j*checkSumStep; byteI < endPos; byteI++) {
-                        checkSum[j] += Byte.toUnsignedInt(txBuffer[byteI]);
-                    }
-                    // Add all checksum bytes
-                    checkSumAdd[j] = (checkSum[j] & 0xff) + (checkSum[j] >> 8 & 0xff) + (checkSum[j] >> 16 & 0xff) + (checkSum[j] >> 24 & 0xff);
-                    while ((checkSumAdd[j] >> 8 & 0xff) != 0b00000000)
-                        checkSumAdd[j] = (checkSumAdd[j] & 0xff) + (checkSumAdd[j] >> 8 & 0xff);
-                }
+                checkSum = CalcCheckSums(txBuffer, NumOfChkSums, headerLen+currentPacketDataLen+delimiterLen);
 
                 //Store the checkSum into header
                 for(int j=0;j<4;j++) {
-                    txBuffer[headerLen-4 + j] = (byte) (checkSumAdd[j] & 0xff);
+                    txBuffer[headerLen-4 + j] = checkSum[j];
                 }
 
-                DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 try {
                     phoneSocketSendDataTest.send(dp);
                 }catch (Exception e){
@@ -570,5 +564,35 @@ public class Streaming {
 
         }
 
+    }
+
+    public byte[] CalcCheckSums(byte[] datagramData, int chkSumsNum, int currentPacketLength)
+    {
+        int checkSumStep = (int) Math.floor(datagramPacketLength/chkSumsNum);
+        int checkSumAdd[] = new int[chkSumsNum];
+        byte checkSumFinal[] = new byte[chkSumsNum];
+
+        int checkSum = 0;
+        for(int j=0;j<chkSumsNum;j++) {
+            checkSum = 0;
+            int endPos = (j+1)*checkSumStep;
+            if (j==chkSumsNum-1) endPos = datagramPacketLength;
+            if (endPos > currentPacketLength)  endPos = currentPacketLength;
+
+            for (int byteI = j*checkSumStep; byteI < endPos; byteI++) {
+                checkSum += Byte.toUnsignedInt(datagramData[byteI]);
+            }
+
+            // Add all checksum bytes
+            checkSumAdd[j] = (checkSum & 0xff) + (checkSum >> 8 & 0xff) + (checkSum >> 16 & 0xff) + (checkSum >> 24 & 0xff);
+            /*while ((checkSumAdd[j] >> 8 & 0xff) != 0b00000000)
+            {
+                checkSumAdd[j] = (checkSumAdd[j] & 0xff) + (checkSumAdd[j] >> 8 & 0xff);
+            }*/
+
+            checkSumFinal[j] = (byte) (checkSumAdd[j] & 0xff);
+        }
+
+        return checkSumFinal;
     }
 }
