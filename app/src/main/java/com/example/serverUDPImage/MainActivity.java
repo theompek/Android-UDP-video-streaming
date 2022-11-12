@@ -3,7 +3,6 @@ package com.example.serverUDPImage;
 import static android.os.Build.VERSION.SDK_INT;
 
 import android.content.Intent;
-import android.graphics.Color;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -20,6 +19,7 @@ import androidx.core.content.ContextCompat;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
 
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
 
@@ -52,7 +52,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         setContentView(R.layout.activity_main);
         setTitle("Server");
         greenColor = ContextCompat.getColor(this, R.color.green);
-        msgList = findViewById(R.id.msgList);
+        //msgList = findViewById(R.id.msgList);
         edMessage = findViewById(R.id.edMessage);
         Setup.verifyStoragePermissions(this);
         //setContentView(R.layout.activity_main);
@@ -63,7 +63,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         } catch (UnknownHostException e) {
             e.printStackTrace();
         }
-        communicationReceiveThread = (new Streaming()).new CommunicationReceiveThread(findViewById(R.id.imageView),this);
+
+        ArrayList<View> listViewObjects = new ArrayList<>();
+        listViewObjects.add(findViewById(R.id.imageView));
+        listViewObjects.add(findViewById(R.id.textViewFPS));
+        listViewObjects.add(findViewById(R.id.textViewKbps));
+        communicationReceiveThread = (new Streaming()).new CommunicationReceiveThread(this, listViewObjects);
+
         communicationSendThread = (new Streaming()).new TestSendDataCommunicationThread(findViewById(R.id.imageView), localIPAddress, this);
     }
 
@@ -71,8 +77,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     public void onClick(View view) {
 
         if (view.getId() == R.id.start_server) {
-            msgList.removeAllViews();
-            Helpers.showMessage("Server Started.", Color.BLACK,msgList, this);
+            //msgList.removeAllViews();
+            //Helpers.showMessage("Server Started.", Color.BLACK,msgList, this);
             this.communicationReceiveThreadHandler = new Thread(communicationReceiveThread);
             this.communicationSendThreadHandler = new Thread(communicationSendThread);
             this.communicationReceiveThreadHandler.start();
@@ -82,7 +88,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
         if (view.getId() == R.id.send_data) {
             String msg = edMessage.getText().toString().trim();
-            Helpers.showMessage("Server : " + msg, Color.BLUE, msgList, this);
+            //Helpers.showMessage("Server : " + msg, Color.BLUE, msgList, this);
             communicationReceiveThread.sendMessage(msg);
         }
 

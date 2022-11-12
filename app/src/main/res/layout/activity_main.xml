@@ -19,7 +19,7 @@
 
     <EditText
         android:id="@+id/edMessage"
-        android:layout_width="match_parent"
+        android:layout_width="366dp"
         android:layout_height="wrap_content"
         android:layout_below="@+id/start_server"
         android:layout_centerHorizontal="true"
@@ -28,32 +28,19 @@
         android:minHeight="48dp"
         android:text="Message from Server" />
 
-    <ScrollView
-        android:layout_width="711dp"
-        android:layout_height="13dp"
-        android:layout_above="@+id/imageView"
-        android:layout_below="@+id/edMessage"
-        android:layout_marginBottom="136dp">
-
-        <LinearLayout
-            android:id="@+id/msgList"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-        </LinearLayout>
-
-    </ScrollView>
-
     <ImageView
         android:id="@+id/imageView"
-        android:layout_width="match_parent"
-        android:layout_height="188dp"
-        android:layout_above="@+id/send_data"
-        android:layout_below="@+id/edMessage"
+        android:layout_width="391dp"
+        android:layout_height="399dp"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentEnd="true"
+        android:layout_alignParentBottom="true"
         android:layout_centerHorizontal="true"
-        android:layout_marginTop="23dp"
-        android:layout_marginBottom="9dp"
+        android:layout_marginStart="0dp"
+        android:layout_marginTop="202dp"
+        android:layout_marginEnd="0dp"
+        android:layout_marginBottom="110dp"
         app:srcCompat="@drawable/image" />
 
     <Button
@@ -65,5 +52,33 @@
         android:onClick="onClick"
         android:text="Send Message to Client"
         android:textColor="@android:color/white" />
+
+    <TextView
+        android:id="@+id/textViewFPS"
+        android:layout_width="164dp"
+        android:layout_height="70dp"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentBottom="true"
+        android:layout_marginStart="11dp"
+        android:layout_marginTop="118dp"
+        android:layout_marginBottom="523dp"
+        android:text="FPS"
+        android:textSize="34sp" />
+
+    <TextView
+        android:id="@+id/textViewKbps"
+        android:layout_width="164dp"
+        android:layout_height="66dp"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentEnd="true"
+        android:layout_alignParentBottom="true"
+        android:layout_marginStart="11dp"
+        android:layout_marginTop="120dp"
+        android:layout_marginEnd="21dp"
+        android:layout_marginBottom="525dp"
+        android:layout_toEndOf="@+id/textViewFPS"
+        android:text="kbps"
+        android:textSize="34sp" />
 
 </RelativeLayout>

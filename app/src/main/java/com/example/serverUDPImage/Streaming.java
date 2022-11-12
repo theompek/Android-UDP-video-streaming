@@ -1,12 +1,15 @@
 package com.example.serverUDPImage;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Environment;
 import android.util.Log;
+import android.view.View;
 import android.widget.ImageView;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -18,9 +21,11 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.Queue;
+import java.util.Random;
 
 public class Streaming {
     int packetsDataLength = 920;
@@ -63,11 +68,19 @@ public class Streaming {
         boolean currentFrameIsBroken = false;
         ImageView imageView;
         Activity mainActivity;
+        TextView textViewFPS;
+        TextView textViewKbps;
         InetAddress esp32Ip;
         int esp32Port;
+        //Time measure for FPS calculation
+        int FPS = 0;
+        int Kbps = 0;
+        int fpsCount = 0;
+        long startTime = System.currentTimeMillis();
+        long timePrevFrame = System.currentTimeMillis();
 
 
-        public CommunicationReceiveThread(ImageView imageView, Activity mainActivity) {
+        public CommunicationReceiveThread(Activity mainActivity, ArrayList<View> listViewObjects) {
             try {
                 phonePort = 8081;
                 phoneSocket = new DatagramSocket(phonePort);
@@ -79,8 +92,10 @@ public class Streaming {
             } catch (IOException e) {
                 Log.e("Myti", "Exception in CommunicationReceiveThread : ", e);
             }
-            this.imageView = imageView;
+            this.imageView = (ImageView) listViewObjects.get(0);
             this.mainActivity = mainActivity;
+            this.textViewFPS = (TextView) listViewObjects.get(1);
+            this.textViewKbps = (TextView) listViewObjects.get(2);
 
         }
 
@@ -98,6 +113,7 @@ public class Streaming {
             return -1;
         }
 
+        @SuppressLint("SetTextI18n")
         public void run() {
             while (!Thread.currentThread().isInterrupted()) {
                 if (this.imageView != null) {
@@ -123,7 +139,7 @@ public class Streaming {
                         delimiterLength = startPacketDelimiter.length;
                     }
 
-                    /*currentPacketLength = phoneDpReceive.getLength() - frStart - delimiterLength;
+                    /* currentPacketLength = phoneDpReceive.getLength() - frStart - delimiterLength;
                     System.arraycopy(datagramData, frStart + delimiterLength, currentPacketData, 0, currentPacketLength);*/
                     header = Arrays.copyOfRange(datagramData, frStart - headerLen, headerLen);
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
@@ -140,7 +156,6 @@ public class Streaming {
                     packetType = Integer.bitCount(header[16]) > 3 ? audioType : imageType;
 
                     currentFrameIsBroken = false;
-
                     if (localFrameId >= maxImagesStored || localFrameId < 0) {
                         //The other values from the header can be used so as the frame be restored, for example we
                         //can compare the values frameId or packetId or frameSize with the values of the store frameObject and find
@@ -177,6 +192,7 @@ public class Streaming {
                     }
 
                     if (currentFrameIsBroken) {
+                        int x =1;
                         continue;
                     }
 
@@ -204,6 +220,8 @@ public class Streaming {
                         //System.arraycopy( currentPacketData, 0, imagesObj[localFrameId].buffer, destPos, currentPacketLength);
                         //Save photo
                         FrameReceivedObject imgObj = imagesQueue.poll();
+                        // Add an error inside the buffer
+
                         if (imgObj != null) {
 
                             File photo = new File(Environment.getExternalStorageDirectory(),
@@ -232,10 +250,26 @@ public class Streaming {
 
                                             // Stuff that updates the UI
                                             imageView.setImageBitmap(bitmap);
-
                                         }
                                     });
 
+
+                                    FPS+= (int) 1000/(System.currentTimeMillis()-timePrevFrame);
+                                    Kbps += imgObj.frameSize/1000;
+                                    fpsCount++;
+
+                                    float timePassed = (System.currentTimeMillis()-startTime)/((float)1000);
+                                    if(timePassed > 1){ // time > 1sec
+                                        textViewFPS.setText("FPS : "+ (int)(FPS/(fpsCount*timePassed)));
+                                        textViewKbps.setText("Kbps: " + (int) (Kbps / timePassed));
+                                        startTime = System.currentTimeMillis();
+                                        FPS = 0;
+                                        Kbps = 0;
+                                        fpsCount = 0;
+                                        Log.e("Myti", "Time Passed = "+ timePassed);
+                                    }
+
+                                    timePrevFrame = System.currentTimeMillis();
                                 }
                             } catch (IOException e) {
                                 Log.e("Myti", "Exception in photoCallback", e);
@@ -452,7 +486,7 @@ public class Streaming {
                                             dataImages[i] = baos.toByteArray();
 
                                             //Thread.sleep(32); //31.25 fps for 32 milliseconds intervals
-                                            Thread.sleep(320); // ~3fps
+                                            //Thread.sleep(10); // 60fps
 
                                             sendDataUdp(dataImages[i], dataImages[i].length, frameCount, localFrameId);
                                             frameCount++;
@@ -548,6 +582,7 @@ public class Streaming {
                     txBuffer[headerLen-4 + j] = checkSum[j];
                 }
 
+                SimulateError(txBuffer,2,1);
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 try {
@@ -564,6 +599,14 @@ public class Streaming {
 
         }
 
+    }
+
+    public void SimulateError(byte[] dataBuffer, int percentage, int errorsNumber){
+        for (int i=0;i<errorsNumber;i++) {
+            if ((new Random()).nextInt(100) > (100 - percentage)) {
+                dataBuffer[(new Random()).nextInt(dataBuffer.length)] = (byte) (new Random()).nextInt(255);
+            }
+        }
     }
 
     public byte[] CalcCheckSums(byte[] datagramData, int chkSumsNum, int currentPacketLength)
