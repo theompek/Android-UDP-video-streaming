@@ -70,14 +70,21 @@ public class Streaming {
         Activity mainActivity;
         TextView textViewFPS;
         TextView textViewKbps;
+        TextView textViewPER;
         InetAddress esp32Ip;
         int esp32Port;
         //Time measure for FPS calculation
         int FPS = 0;
+        float PER =0;//Packets Error Rate, how many packet received have error divided by the total packets received
+        int PErrors = 0; //Number of packets with errors
+        int PCount = 0; //Packets Received
         int Kbps = 0;
         int fpsCount = 0;
         long startTime = System.currentTimeMillis();
         long timePrevFrame = System.currentTimeMillis();
+        int ackBuffLen = 2+1+4+1;  // OKPacket(2), packetId(1), frameId(4), localFrameId(1)
+        byte ACKPacketBf[] = new byte[ackBuffLen];
+        boolean skipIteration = false;
 
 
         public CommunicationReceiveThread(Activity mainActivity, ArrayList<View> listViewObjects) {
@@ -96,6 +103,7 @@ public class Streaming {
             this.mainActivity = mainActivity;
             this.textViewFPS = (TextView) listViewObjects.get(1);
             this.textViewKbps = (TextView) listViewObjects.get(2);
+            this.textViewPER = (TextView) listViewObjects.get(3);
 
         }
 
@@ -126,6 +134,7 @@ public class Streaming {
                     Arrays.fill(datagramData, (byte) 0);
                     phoneSocket.receive(phoneDpReceive);
                     datagramData = phoneDpReceive.getData();
+                    skipIteration = false;
                     //Find frame start
                     if (searchFrame) {
                         frStart = findDelimiter(datagramData, startFrameDelimiter);
@@ -156,6 +165,52 @@ public class Streaming {
                     packetType = Integer.bitCount(header[16]) > 3 ? audioType : imageType;
 
                     currentFrameIsBroken = false;
+
+                    //Check the CheckSum to insure the integrity of the data
+                    for (int i=0;i<NumOfChkSums;i++) {
+                        //Get received checkSums
+                        receivedCheckSum[i] = datagramData[headerLen - NumOfChkSums + i];
+
+                        //Set to zero the checkSum fields and calculate the checksum of the current packet
+                        datagramData[headerLen - NumOfChkSums + i] = 0;
+                    }
+
+                    checkSums = CalcCheckSums(datagramData, NumOfChkSums, frStart + delimiterLength +packetSize);
+
+                    //Calculate Packet Error Rate And errors in packet, we divide the received packet into 'NumOfChkSums' number of chunks
+                    PCount += NumOfChkSums;
+                    for (int i=0;i<NumOfChkSums;i++) {
+                        if (checkSums[i] != receivedCheckSum[i]){
+                            PErrors++;
+                            currentFrameIsBroken= true;
+                        }
+                    }
+
+                    if (checkSums[0] != receivedCheckSum[0]) skipIteration=true;
+
+                    if (currentFrameIsBroken) skipIteration=true;
+
+                    if(skipIteration) {
+                        //Send message back to the server (esp32 board)
+                        if (skipIteration) {
+                            ACKPacketBf[0] = 0;
+                            ACKPacketBf[1] = 0;
+                        } else {
+                            ACKPacketBf[0] = 1;
+                            ACKPacketBf[1] = 1;
+                        }
+                        ACKPacketBf[2] = header[10];    //packetId
+                        ACKPacketBf[3] = header[1];     //frameId1
+                        ACKPacketBf[4] = header[2];     //frameId2
+                        ACKPacketBf[5] = header[3];     //frameId3
+                        ACKPacketBf[6] = header[4];     //frameId4
+                        ACKPacketBf[7] = header[15];    //localFrameId
+
+                        DatagramPacket dp = new DatagramPacket(ACKPacketBf, ACKPacketBf.length, esp32Ip, esp32Port);
+                        phoneSocket.send(dp);
+                    }
+                    if(skipIteration) continue;
+
                     if (localFrameId >= maxImagesStored || localFrameId < 0) {
                         //The other values from the header can be used so as the frame be restored, for example we
                         //can compare the values frameId or packetId or frameSize with the values of the store frameObject and find
@@ -171,28 +226,6 @@ public class Streaming {
                     //If the localFrameId is corrupted or the header is from other frame then skip
                     if (FramesBuffer[localFrameId].compareHeaders(frameId, frameSize, packetsNumber, localFrameId) != 0) {
                         //FramesBuffer[localFrameId].initiateFrame(); //Broken Frame
-                        continue;
-                    }
-
-
-                    //Check the CheckSum to insure the integrity of the data
-                    for (int i=0;i<NumOfChkSums;i++) {
-                        //Get received checkSums
-                        receivedCheckSum[i] = datagramData[headerLen - NumOfChkSums + i];
-
-                        //Set to zero the checkSum fields and calculate the checksum of the current packet
-                        datagramData[headerLen - NumOfChkSums + i] = 0;
-                    }
-
-                    checkSums = CalcCheckSums(datagramData, NumOfChkSums, frStart + delimiterLength +packetSize);
-
-
-                    for (int i=0;i<NumOfChkSums;i++) {
-                        if (checkSums[i] != receivedCheckSum[i]) currentFrameIsBroken= true;
-                    }
-
-                    if (currentFrameIsBroken) {
-                        int x =1;
                         continue;
                     }
 
@@ -239,6 +272,7 @@ public class Streaming {
                                 String s = String.valueOf(fos.getChannel().size());
                                 fos.close();
                                 */
+                                //SimulateError(imgObj.buffer,90,1);
 
                                 Bitmap bitmap = BitmapFactory.decodeByteArray(imgObj.buffer, 0, imgObj.frameSize);
                                 Log.d("Myti", "frameSize " + frameSize);
@@ -257,20 +291,26 @@ public class Streaming {
                                     FPS+= (int) 1000/(System.currentTimeMillis()-timePrevFrame);
                                     Kbps += imgObj.frameSize/1000;
                                     fpsCount++;
+                                    PER = (float)(PCount - PErrors)/ PCount; //Packets error rate. Value of 1 means 100% success without errors, 0 means all packet have error.
 
-                                    float timePassed = (System.currentTimeMillis()-startTime)/((float)1000);
-                                    if(timePassed > 1){ // time > 1sec
-                                        textViewFPS.setText("FPS : "+ (int)(FPS/(fpsCount*timePassed)));
-                                        textViewKbps.setText("Kbps: " + (int) (Kbps / timePassed));
-                                        startTime = System.currentTimeMillis();
-                                        FPS = 0;
-                                        Kbps = 0;
-                                        fpsCount = 0;
-                                        Log.e("Myti", "Time Passed = "+ timePassed);
-                                    }
-
-                                    timePrevFrame = System.currentTimeMillis();
                                 }
+
+                                float timePassed = (System.currentTimeMillis()-startTime)/((float)1000);
+                                if(timePassed > 1){ // time > 1sec
+                                    textViewFPS.setText("FPS : "+ (int)(FPS/(fpsCount*timePassed)));
+                                    textViewKbps.setText("Kbps: " + (int) (Kbps / timePassed));
+                                    textViewPER.setText("PER: " + PER);
+                                    startTime = System.currentTimeMillis();
+                                    FPS = 0;
+                                    Kbps = 0;
+                                    fpsCount = 0;
+                                    PCount = 0;
+                                    PErrors = 0;
+                                    PER = 0;
+                                    Log.e("Myti", "Time Passed = "+ timePassed);
+                                }
+
+                                timePrevFrame = System.currentTimeMillis();
                             } catch (IOException e) {
                                 Log.e("Myti", "Exception in photoCallback", e);
                             }
@@ -485,7 +525,7 @@ public class Streaming {
                                             bMap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
                                             dataImages[i] = baos.toByteArray();
 
-                                            //Thread.sleep(32); //31.25 fps for 32 milliseconds intervals
+                                            Thread.sleep(29); //31.25 fps for 32 milliseconds intervals
                                             //Thread.sleep(10); // 60fps
 
                                             sendDataUdp(dataImages[i], dataImages[i].length, frameCount, localFrameId);
@@ -520,8 +560,6 @@ public class Streaming {
             int packetOffset = 0;
             byte[] txBuffer = new byte[datagramPacketLength];
             int frameId = frameCount;  //The ID number(counter) of the current frame(all picture)
-            //short checkSumsLen = 256;
-            byte checkSum[] = {0, 0, 0, 0};
 
             currentPacketDataLen = (short) (packetsDataLength);
             packetsNumber = (short)((frameSize/packetsDataLength) + (frameSize%packetsDataLength==0?0:1));
@@ -531,58 +569,12 @@ public class Streaming {
                 if(packetId == packetsNumber-1) currentPacketDataLen = lastPacketLen;
 
                 packetOffset = packetId*packetsDataLength;
-                // Initialize array
-                Arrays.fill(txBuffer, (byte) 0);
-                //Copy the piece of frame into txBuffer
-                System.arraycopy( frame, packetOffset, txBuffer, headerLen+delimiterLen, currentPacketDataLen);
 
-                //Header construction
-                txBuffer[1] = (byte)(frameId & 0xff);
-                txBuffer[2] = (byte)(frameId>>8 & 0xff);
-                txBuffer[3] = (byte)(frameId>>16 & 0xff);
-                txBuffer[4] = (byte)(frameId>>24 & 0xff);
-                txBuffer[5] = (byte)(frameSize & 0xff);
-                txBuffer[6] = (byte)(frameSize>>8 & 0xff);
-                txBuffer[7] = (byte)(frameSize>>16 & 0xff);
-                txBuffer[8] = (byte)(frameSize>>24 & 0xff);
-                txBuffer[9] = (byte)packetsNumber;
-                txBuffer[10] = (byte)packetId;
-                txBuffer[11] = (byte)(packetsDataLength & 0xff);
-                txBuffer[12] = (byte)(packetsDataLength>>8 & 0xff);
-                txBuffer[13] = (byte)(currentPacketDataLen & 0xff);
-                txBuffer[14] = (byte)(currentPacketDataLen>>8 & 0xff);
-                txBuffer[15] = localFrameId;
-                txBuffer[16] = imageType;    //Image type
-                //CheckSum set to zero
-                txBuffer[17] = 0;
-                txBuffer[18] = 0;
-                txBuffer[19] = 0;
-                txBuffer[20] = 0;
-                // Delimiters for new frame and packets
-                if(packetId == -1){
-                    txBuffer[21] = 10;
-                    txBuffer[22] = 10;
-                    txBuffer[23] = 5;
-                    txBuffer[24] = 10;
-                    txBuffer[25] = 10;
-                }
-                else {
-                    txBuffer[21] = 5;
-                    txBuffer[22] = 50;
-                    txBuffer[23] = 5;
-                    txBuffer[24] = 50;
-                    txBuffer[25] = 50;
-                }
+                //Construct the data inside the buffer
+                createDataIntoBuffer(frame, txBuffer, frameId, packetOffset, frameSize, delimiterLen,
+                                        currentPacketDataLen, packetsNumber, localFrameId, packetId);
 
-                //Calculate checkSums
-                checkSum = CalcCheckSums(txBuffer, NumOfChkSums, headerLen+currentPacketDataLen+delimiterLen);
-
-                //Store the checkSum into header
-                for(int j=0;j<4;j++) {
-                    txBuffer[headerLen-4 + j] = checkSum[j];
-                }
-
-                SimulateError(txBuffer,2,1);
+                //SimulateError(txBuffer,0,1);
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 try {
@@ -592,14 +584,74 @@ public class Streaming {
                     e.printStackTrace();
                 }
 
-
                 packetId++;
             }
 
+        }
+
+        public void createDataIntoBuffer(byte[] frame, byte[] txBuffer,
+                                         int frameId, int packetOffset,
+                                         int frameSize, int delimiterLen,
+                                         short currentPacketDataLen,short packetsNumber,
+                                         byte localFrameId, short packetId){
+
+            //short checkSumsLen = 256;
+            byte checkSum[] = {0, 0, 0, 0};
+
+            // Initialize array
+            Arrays.fill(txBuffer, (byte) 0);
+            //Copy the piece of frame into txBuffer
+            System.arraycopy( frame, packetOffset, txBuffer, headerLen+delimiterLen, currentPacketDataLen);
+
+            //Header construction
+            txBuffer[1] = (byte)(frameId & 0xff);
+            txBuffer[2] = (byte)(frameId>>8 & 0xff);
+            txBuffer[3] = (byte)(frameId>>16 & 0xff);
+            txBuffer[4] = (byte)(frameId>>24 & 0xff);
+            txBuffer[5] = (byte)(frameSize & 0xff);
+            txBuffer[6] = (byte)(frameSize>>8 & 0xff);
+            txBuffer[7] = (byte)(frameSize>>16 & 0xff);
+            txBuffer[8] = (byte)(frameSize>>24 & 0xff);
+            txBuffer[9] = (byte)packetsNumber;
+            txBuffer[10] = (byte)packetId;
+            txBuffer[11] = (byte)(packetsDataLength & 0xff);
+            txBuffer[12] = (byte)(packetsDataLength>>8 & 0xff);
+            txBuffer[13] = (byte)(currentPacketDataLen & 0xff);
+            txBuffer[14] = (byte)(currentPacketDataLen>>8 & 0xff);
+            txBuffer[15] = localFrameId;
+            txBuffer[16] = imageType;    //Image type
+            //CheckSum set to zero
+            txBuffer[17] = 0;
+            txBuffer[18] = 0;
+            txBuffer[19] = 0;
+            txBuffer[20] = 0;
+            // Delimiters for new frame and packets
+            if(packetId == -1){
+                txBuffer[21] = 10;
+                txBuffer[22] = 10;
+                txBuffer[23] = 5;
+                txBuffer[24] = 10;
+                txBuffer[25] = 10;
+            }
+            else {
+                txBuffer[21] = 5;
+                txBuffer[22] = 50;
+                txBuffer[23] = 5;
+                txBuffer[24] = 50;
+                txBuffer[25] = 50;
+            }
+
+            //Calculate checkSums
+            checkSum = CalcCheckSums(txBuffer, NumOfChkSums, headerLen+currentPacketDataLen+delimiterLen);
+
+            //Store the checkSum into header
+            for(int j=0;j<NumOfChkSums;j++) {
+                txBuffer[headerLen-NumOfChkSums + j] = checkSum[j];
+            }
 
         }
 
-    }
+    } // End of class
 
     public void SimulateError(byte[] dataBuffer, int percentage, int errorsNumber){
         for (int i=0;i<errorsNumber;i++) {
@@ -609,6 +661,8 @@ public class Streaming {
         }
     }
 
+
+   // Split the datagramData into chkSumsNum equal of length pieces and calculate for each the checkSum
     public byte[] CalcCheckSums(byte[] datagramData, int chkSumsNum, int currentPacketLength)
     {
         int checkSumStep = (int) Math.floor(datagramPacketLength/chkSumsNum);
@@ -619,7 +673,7 @@ public class Streaming {
         for(int j=0;j<chkSumsNum;j++) {
             checkSum = 0;
             int endPos = (j+1)*checkSumStep;
-            if (j==chkSumsNum-1) endPos = datagramPacketLength;
+            //if (j==chkSumsNum-1) endPos = datagramPacketLength;
             if (endPos > currentPacketLength)  endPos = currentPacketLength;
 
             for (int byteI = j*checkSumStep; byteI < endPos; byteI++) {
@@ -628,10 +682,10 @@ public class Streaming {
 
             // Add all checksum bytes
             checkSumAdd[j] = (checkSum & 0xff) + (checkSum >> 8 & 0xff) + (checkSum >> 16 & 0xff) + (checkSum >> 24 & 0xff);
-            /*while ((checkSumAdd[j] >> 8 & 0xff) != 0b00000000)
+            while ((checkSumAdd[j] >> 8 & 0xff) != 0b00000000)
             {
                 checkSumAdd[j] = (checkSumAdd[j] & 0xff) + (checkSumAdd[j] >> 8 & 0xff);
-            }*/
+            }
 
             checkSumFinal[j] = (byte) (checkSumAdd[j] & 0xff);
         }
