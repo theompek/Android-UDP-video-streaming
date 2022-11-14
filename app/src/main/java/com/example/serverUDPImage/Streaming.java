@@ -71,15 +71,17 @@ public class Streaming {
         TextView textViewFPS;
         TextView textViewKbps;
         TextView textViewPER;
+        TextView textViewKbpsSucceed;
         InetAddress esp32Ip;
         int esp32Port;
-        //Time measure for FPS calculation
-        int FPS = 0;
+        //Time measure for timePerFrameSum calculation
+        int timePerFrameSum = 0;
         float PER =0;//Packets Error Rate, how many packet received have error divided by the total packets received
         int PErrors = 0; //Number of packets with errors
-        int PCount = 0; //Packets Received
-        int Kbps = 0;
-        int fpsCount = 0;
+        int PCount = 1; //Packets Received
+        float Kbps = 0;
+        float KbpsSucceed = 0;
+        int framesCount = 0;
         long startTime = System.currentTimeMillis();
         long timePrevFrame = System.currentTimeMillis();
         int ackBuffLen = 2+1+4+1;  // OKPacket(2), packetId(1), frameId(4), localFrameId(1)
@@ -104,6 +106,7 @@ public class Streaming {
             this.textViewFPS = (TextView) listViewObjects.get(1);
             this.textViewKbps = (TextView) listViewObjects.get(2);
             this.textViewPER = (TextView) listViewObjects.get(3);
+            this.textViewKbpsSucceed = (TextView) listViewObjects.get(4);
 
         }
 
@@ -130,6 +133,7 @@ public class Streaming {
 
                 Log.d("Myti", "Get data");
                 try {
+
                     // Initialize array
                     Arrays.fill(datagramData, (byte) 0);
                     phoneSocket.receive(phoneDpReceive);
@@ -164,6 +168,9 @@ public class Streaming {
                     localFrameId = (header[15] & 0xff);
                     packetType = Integer.bitCount(header[16]) > 3 ? audioType : imageType;
 
+
+                    displayStatistics(mainActivity,packetSize);
+
                     currentFrameIsBroken = false;
 
                     //Check the CheckSum to insure the integrity of the data
@@ -190,7 +197,7 @@ public class Streaming {
 
                     if (currentFrameIsBroken) skipIteration=true;
 
-                    if(skipIteration) {
+                    if(skipIteration ) {
                         //Send message back to the server (esp32 board)
                         if (skipIteration) {
                             ACKPacketBf[0] = 0;
@@ -288,26 +295,9 @@ public class Streaming {
                                     });
 
 
-                                    FPS+= (int) 1000/(System.currentTimeMillis()-timePrevFrame);
-                                    Kbps += imgObj.frameSize/1000;
-                                    fpsCount++;
-                                    PER = (float)(PCount - PErrors)/ PCount; //Packets error rate. Value of 1 means 100% success without errors, 0 means all packet have error.
-
-                                }
-
-                                float timePassed = (System.currentTimeMillis()-startTime)/((float)1000);
-                                if(timePassed > 1){ // time > 1sec
-                                    textViewFPS.setText("FPS : "+ (int)(FPS/(fpsCount*timePassed)));
-                                    textViewKbps.setText("Kbps: " + (int) (Kbps / timePassed));
-                                    textViewPER.setText("PER: " + PER);
-                                    startTime = System.currentTimeMillis();
-                                    FPS = 0;
-                                    Kbps = 0;
-                                    fpsCount = 0;
-                                    PCount = 0;
-                                    PErrors = 0;
-                                    PER = 0;
-                                    Log.e("Myti", "Time Passed = "+ timePassed);
+                                    KbpsSucceed += imgObj.frameSize;
+                                    timePerFrameSum += (int) 1000/(System.currentTimeMillis()-timePrevFrame);
+                                    framesCount++;
                                 }
 
                                 timePrevFrame = System.currentTimeMillis();
@@ -328,6 +318,41 @@ public class Streaming {
             }
         }
 
+        @SuppressLint("SetTextI18n")
+        public void displayStatistics(Activity mainActivity, int packetSize){
+            //Display performance info
+            Kbps += packetSize;
+            float timePassed = (System.currentTimeMillis()-startTime)/((float)1000);
+            if(timePassed > 1){ // time > 1sec
+                PER = (float)(PCount - PErrors)/ PCount; //Packets error rate. Value of 1 means 100% success without errors, 0 means all packet have error.
+                String FPS_st = "FPS : "+ (int)(timePerFrameSum /(framesCount *timePassed));
+                String KbpsAll_st = "Kbps(ALL): " + (int) ((Kbps/1000) / timePassed);
+                String PER_st = "PER: " + String.format("%.05f", PER);
+                String KbpsSucceed_st = "Kbps(Suc): " + (int) ((KbpsSucceed/1000) / timePassed);    //division with 1000 means kb
+
+                mainActivity.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+
+                        // Stuff that updates the UI
+                        textViewFPS.setText(FPS_st);
+                        textViewKbps.setText(KbpsAll_st);
+                        textViewPER.setText(PER_st);
+                        textViewKbpsSucceed.setText(KbpsSucceed_st);
+                    }
+                });
+
+                startTime = System.currentTimeMillis();
+                timePerFrameSum = 0;
+                Kbps = 0;
+                KbpsSucceed = 0;
+                framesCount = 0;
+                PCount = 1;
+                PErrors = 0;
+                PER = 0;
+                Log.e("Myti", "Time Passed = "+ timePassed);
+            }
+        }
 
         public void sendMessage(String message) {
             try {
@@ -574,7 +599,7 @@ public class Streaming {
                 createDataIntoBuffer(frame, txBuffer, frameId, packetOffset, frameSize, delimiterLen,
                                         currentPacketDataLen, packetsNumber, localFrameId, packetId);
 
-                //SimulateError(txBuffer,0,1);
+                SimulateError(txBuffer,4,1);
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 try {

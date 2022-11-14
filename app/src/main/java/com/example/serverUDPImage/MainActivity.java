@@ -69,6 +69,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         listViewObjects.add(findViewById(R.id.textViewFPS));
         listViewObjects.add(findViewById(R.id.textViewKbps));
         listViewObjects.add(findViewById(R.id.textViewPER));
+        listViewObjects.add(findViewById(R.id.textViewKbpsSucceed));
         communicationReceiveThread = (new Streaming()).new CommunicationReceiveThread(this, listViewObjects);
 
         communicationSendThread = (new Streaming()).new TestSendDataCommunicationThread(findViewById(R.id.imageView), localIPAddress, this);
