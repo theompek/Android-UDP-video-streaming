@@ -136,7 +136,6 @@ public class Streaming {
 
                 Log.d("Myti", "Get data");
                 try {
-
                     // Initialize array
                     //Arrays.fill(datagramData, (byte) 0);
                     phoneSocket.receive(phoneDpReceive);
@@ -542,9 +541,9 @@ public class Streaming {
                             byte[][] dataImages = new byte[3][];
                             int frameCount = 0;
                             byte localFrameId = 0;
+                            long prevTime = 0;
 
                             while(true){
-
                                 try {
                                     //Drawable drawable = getResources().getDrawable(getResources().getIdentifier("img1.jpeg", "drawable", getPackageName()));
                                     for (int i = 0; i < 3; i++) {
@@ -556,11 +555,14 @@ public class Streaming {
                                             ByteArrayOutputStream baos = new ByteArrayOutputStream();
                                             bMap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
                                             dataImages[i] = baos.toByteArray();
+                                            long timeInterval = 31; //31.25 fps for 31 milliseconds intervals
+                                            long timeWait = timeInterval - (System.currentTimeMillis()-prevTime);
+                                            if (timeWait > 0)
+                                                Thread.sleep(timeWait);
 
-                                            Thread.sleep(1); //31.25 fps for 32 milliseconds intervals
-                                            //Thread.sleep(10); // 60fps
-
+                                            prevTime = System.currentTimeMillis();
                                             sendDataUdp(dataImages[i], dataImages[i].length, frameCount, localFrameId);
+
                                             frameCount++;
                                             localFrameId++;
                                             if (localFrameId == maxImagesStored) localFrameId = 0;
@@ -583,7 +585,6 @@ public class Streaming {
 
 
         public void sendDataUdp(byte[] frame, int frameSize, int frameId, byte localFrameId) {
-
             byte delimiterLen = 5;
             short packetsNumber = 0;  //The number of packets after splitting all the frame
             short packetId = 0;       //The ID number(counter) of the current packet
@@ -611,9 +612,9 @@ public class Streaming {
                 constructDataIntoBuffer(frame, txBuffer, frameId, frameSize, delimiterLen,
                                         currentPacketDataLen, packetsNumber, localFrameId, packetId);
 
-                if(packetId == 0) {
-                    SimulateError(txBuffer,10,1, delimiterLen);
-                }
+
+                SimulateError(txBuffer,100,10, delimiterLen);
+
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 try {
@@ -657,9 +658,7 @@ public class Streaming {
                             Log.d("Myti", "Exception server not ip for client");
                             e.printStackTrace();
                         }
-
                     }
-
                 }catch (Exception e){
                     Log.d("Myti", "There is not notification message for erroneous packet");
                     e.printStackTrace();
@@ -735,7 +734,7 @@ public class Streaming {
     } // End of class
 
     public void SimulateError(byte[] dataBuffer, int percentage, int errorsNumber, int delimiterLen){
-        int max = dataBuffer.length;
+        int max = dataBuffer.length-1;
         int min = headerLen+delimiterLen;
         if ((new Random()).nextInt(100) >= (100 - percentage)) {
             for (int i=0;i<errorsNumber;i++) {
