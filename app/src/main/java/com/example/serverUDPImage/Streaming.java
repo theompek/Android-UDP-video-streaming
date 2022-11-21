@@ -31,7 +31,8 @@ public class Streaming {
     int packetsDataLength = 920;
     int datagramPacketLength = 1024;
     byte maxImagesStored = 100;
-    byte headerLen = 21;
+    byte headerLen = 26;
+    int emptyBytesNum = 5;
     int NumOfChkSums = 4;
     int confirmationMessageLen = 8;
 
@@ -116,7 +117,7 @@ public class Streaming {
         public int findDelimiter(byte[] data, byte[] delimiter) {
             int i = headerLen;
             int j = 0;
-            while (i < data.length) {
+            while (i < (data.length-delimiter.length)) {
                 for (j = 0; j < delimiter.length; j++) {
                     if (i + j >= data.length) return -1;
                     if (data[i + j] != delimiter[j]) break;
@@ -141,22 +142,11 @@ public class Streaming {
                     phoneSocket.receive(phoneDpReceive);
                     datagramData = phoneDpReceive.getData();
                     skipIteration = false;
-                    //Find frame start
-                    if (searchFrame) {
-                        frStart = findDelimiter(datagramData, startFrameDelimiter);
-                        if (frStart == -1) continue;
-                        searchFrame = false;
-                        delimiterLength = startFrameDelimiter.length;
-                    } else {
-                        frStart = findDelimiter(datagramData, startPacketDelimiter);
-                        searchFrame = false;
-                        if (frStart == -1) continue;
-                        delimiterLength = startPacketDelimiter.length;
-                    }
+
 
                     /* currentPacketLength = phoneDpReceive.getLength() - frStart - delimiterLength;
                     System.arraycopy(datagramData, frStart + delimiterLength, currentPacketData, 0, currentPacketLength);*/
-                    header = Arrays.copyOfRange(datagramData, frStart - headerLen, headerLen);
+                    header = Arrays.copyOfRange(datagramData, 0, headerLen);
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
                     //and 4, 5, 6, 7 ,8 number of 1 means audio type.
@@ -178,17 +168,17 @@ public class Streaming {
                     //Check the CheckSum to insure the integrity of the data
                     for (int i=0;i<NumOfChkSums;i++) {
                         //Get received checkSums
-                        receivedCheckSum[i] = datagramData[headerLen - NumOfChkSums + i];
+                        receivedCheckSum[i] = datagramData[headerLen-NumOfChkSums-emptyBytesNum+i];
 
                         //Set to zero the checkSum fields and calculate the checksum of the current packet
-                        datagramData[headerLen - NumOfChkSums + i] = 0;
+                        datagramData[headerLen-NumOfChkSums-emptyBytesNum+i] = 0;
                     }
 
-                    checkSums = CalcCheckSums(datagramData, NumOfChkSums, frStart + delimiterLength + packetDataSize);
+                    checkSums = CalcCheckSums(datagramData, NumOfChkSums, headerLen + packetDataSize);
 
                     //Calculate Packet Error Rate And errors in packet, we divide the received packet into 'NumOfChkSums' number of chunks
                     PCount += NumOfChkSums;
-                    Kbps += packetDataSize + headerLen + delimiterLength;
+                    Kbps += packetDataSize + headerLen;
                     errorPart = 0;
                     for (int i=0;i<NumOfChkSums;i++) {
                         if (checkSums[i] != receivedCheckSum[i]){
@@ -220,7 +210,7 @@ public class Streaming {
                         continue;
                     }
                     else{
-                        KbpsSucceed += packetDataSize + headerLen + delimiterLength;
+                        KbpsSucceed += packetDataSize + headerLen;
                     }
 
                     if (localFrameId >= maxImagesStored || localFrameId < 0) {
@@ -241,7 +231,7 @@ public class Streaming {
                         continue;
                     }
 
-                    System.arraycopy(datagramData, frStart + delimiterLength, currentPacketData, 0, packetDataSize);
+                    System.arraycopy(datagramData, headerLen, currentPacketData, 0, packetDataSize);
                     //FramesBuffer[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
                     FramesBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId);
 
@@ -585,7 +575,6 @@ public class Streaming {
 
 
         public void sendDataUdp(byte[] frame, int frameSize, int frameId, byte localFrameId) {
-            byte delimiterLen = 5;
             short packetsNumber = 0;  //The number of packets after splitting all the frame
             short packetId = 0;       //The ID number(counter) of the current packet
             short lastPacketLen = 0;     //The last packet has usually smaller length than other because is truncated
@@ -609,14 +598,14 @@ public class Streaming {
                 if(packetId == packetsNumber-1) currentPacketDataLen = lastPacketLen;
 
                 //Construct the data inside the buffer
-                constructDataIntoBuffer(frame, txBuffer, frameId, frameSize, delimiterLen,
+                constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
                                         currentPacketDataLen, packetsNumber, localFrameId, packetId);
 
 
-                SimulateError(txBuffer,100,10, delimiterLen);
+                SimulateError(txBuffer,100,0);
 
-                //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
-                DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 try {
                     phoneSocketSendDataTest.send(dp);
                 }catch (Exception e){
@@ -648,10 +637,10 @@ public class Streaming {
                         }
 
                         //Construct the data inside the buffer
-                        constructDataIntoBuffer(frame, txBuffer, frameId, frameSize, delimiterLen,
+                        constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
                                 currentPacketDataLen, packetsNumber, localFrameId, tempPacketId);
 
-                        DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                        DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                         try {
                             phoneSocketSendDataTest.send(dp);
                         }catch (Exception e){
@@ -669,8 +658,8 @@ public class Streaming {
 
         }
 
-        public void constructDataIntoBuffer(byte[] frame, byte[] txBuffer, int frameId,
-                                            int frameSize, int delimiterLen,
+        public void constructDataIntoBuffer(byte[] frame, byte[] txBuffer,
+                                            int frameId, int frameSize,
                                             short currentPacketDataLen, short packetsNumber,
                                             byte localFrameId, short packetId){
 
@@ -681,7 +670,7 @@ public class Streaming {
             // Initialize array
             Arrays.fill(txBuffer, (byte) 0);
             //Copy the piece of frame into txBuffer
-            System.arraycopy( frame, packetOffset, txBuffer, headerLen+delimiterLen, currentPacketDataLen);
+            System.arraycopy( frame, packetOffset, txBuffer, headerLen, currentPacketDataLen);
 
             //Header construction
             txBuffer[1] = (byte)(frameId & 0xff);
@@ -705,7 +694,7 @@ public class Streaming {
             txBuffer[18] = 0;
             txBuffer[19] = 0;
             txBuffer[20] = 0;
-            // Delimiters for new frame and packets
+            // Delimiters for new frame and packets, currently empty places
             if(packetId == -1){
                 txBuffer[21] = 10;
                 txBuffer[22] = 10;
@@ -721,21 +710,20 @@ public class Streaming {
                 txBuffer[25] = 50;
             }
 
+
             //Calculate checkSums
-            checkSum = CalcCheckSums(txBuffer, NumOfChkSums, headerLen+currentPacketDataLen+delimiterLen);
+            checkSum = CalcCheckSums(txBuffer, NumOfChkSums, headerLen+currentPacketDataLen);
 
             //Store the checkSum into header
             for(int j=0;j<NumOfChkSums;j++) {
-                txBuffer[headerLen-NumOfChkSums + j] = checkSum[j];
+                txBuffer[headerLen-NumOfChkSums-emptyBytesNum + j] = checkSum[j];
             }
-
         }
-
     } // End of class
 
-    public void SimulateError(byte[] dataBuffer, int percentage, int errorsNumber, int delimiterLen){
+    public void SimulateError(byte[] dataBuffer, int percentage, int errorsNumber){
         int max = dataBuffer.length-1;
-        int min = headerLen+delimiterLen;
+        int min = headerLen+1;
         if ((new Random()).nextInt(100) >= (100 - percentage)) {
             for (int i=0;i<errorsNumber;i++) {
                 dataBuffer[(new Random()).nextInt( (max - min) + 1) + min] = (byte) (new Random()).nextInt(255);
