@@ -21,6 +21,8 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -35,6 +37,8 @@ public class Streaming {
     int emptyBytesNum = 5;
     int NumOfChkSums = 4;
     int confirmationMessageLen = 8;
+    String respTimeMsg = "RESPONSE_TIME_REQUEST";
+    int customMsgFromServerNum = 101;
 
     public class CommunicationReceiveThread implements Runnable {
         public DatagramSocket phoneSocket;
@@ -91,6 +95,8 @@ public class Streaming {
         byte ACKPacketBf[] = new byte[ackBuffLen];
         byte errorPart = 0;
         boolean skipIteration = false;
+        int responseTimePhone;
+
 
 
         public CommunicationReceiveThread(Activity mainActivity, ArrayList<View> listViewObjects) {
@@ -142,7 +148,6 @@ public class Streaming {
                     phoneSocket.receive(phoneDpReceive);
                     datagramData = phoneDpReceive.getData();
                     skipIteration = false;
-
 
                     /* currentPacketLength = phoneDpReceive.getLength() - frStart - delimiterLength;
                     System.arraycopy(datagramData, frStart + delimiterLength, currentPacketData, 0, currentPacketLength);*/
@@ -212,6 +217,20 @@ public class Streaming {
                     else{
                         KbpsSucceed += packetDataSize + headerLen;
                     }
+
+                    /*
+                    if(packetDataSize < customMsgFromServerNum){
+                        String msgFromServer = new String( Arrays.copyOfRange(datagramData, headerLen, headerLen+packetDataSize), Charset.forName("UTF-8"));
+                        if(respTimeMsg.equals(msgFromServer)){
+                            DatagramPacket dp = new DatagramPacket(ACKPacketBf, ACKPacketBf.length, phoneDpReceive.getAddress(), phoneDpReceive.getPort());
+                            phoneSocket.send(dp);
+
+                            continue;
+                        }
+                    }
+                    */
+
+                    if(checkResponseTime()) continue;
 
                     if (localFrameId >= maxImagesStored || localFrameId < 0) {
                         //The other values from the header can be used so as the frame be restored, for example we
@@ -311,6 +330,51 @@ public class Streaming {
 
             }
         }
+
+        public boolean checkResponseTime(){
+            if(packetDataSize < customMsgFromServerNum) {
+                int prevTimeOut=1;
+                int maxRespTime = 100;
+                byte[] msg= respTimeMsg.getBytes(StandardCharsets.UTF_8);
+                byte[] txBufferReceive = new byte[headerLen+msg.length];
+                long timeStart = 0;
+                String msgFromServer = new String(Arrays.copyOfRange(datagramData, headerLen, headerLen + packetDataSize), Charset.forName("UTF-8"));
+
+                if (respTimeMsg.equals(msgFromServer)) {
+                    DatagramPacket dp = new DatagramPacket(ACKPacketBf, ACKPacketBf.length, phoneDpReceive.getAddress(), phoneDpReceive.getPort());
+
+                    try {
+                        prevTimeOut = phoneSocket.getSoTimeout();
+                        timeStart = System.currentTimeMillis();
+                        phoneSocket.send(dp);
+                    } catch (Exception e) {
+                        Log.d("Myti", "Exception into getResponseTime function into Phone thread receive, send message");
+                        e.printStackTrace();
+                    }
+
+                    try {
+                        phoneSocket.setSoTimeout(maxRespTime);
+                        try {
+                            //Arrays.fill(txBuffer, (byte) 0);
+                            DatagramPacket phoneDpReceive = new DatagramPacket(txBufferReceive, txBufferReceive.length);
+                            //phoneSocketSendDataTest.getSoTimeout();
+                            phoneSocket.receive(phoneDpReceive);
+                        } catch (Exception e) {
+                            Log.d("Myti", "Exception into getResponseTime function into Phone thread receive, receive message");
+                            e.printStackTrace();
+                        }
+                        responseTimePhone = (int) (System.currentTimeMillis() - timeStart);
+                        phoneSocket.setSoTimeout(prevTimeOut);
+                    } catch (Exception e) {
+                        Log.d("Myti", "Exception into getResponseTime function into Phone thread receive, set timeOut");
+                        e.printStackTrace();
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+
 
         @SuppressLint("SetTextI18n")
         public void displayStatistics(Activity mainActivity){
@@ -488,6 +552,7 @@ public class Streaming {
         private Context context;
         public DatagramSocket phoneSocketSendDataTest;
         public int phonePortSendDataTest;
+        public int responseTimeServer;
         /*
         private byte buf[] = new byte[packetLen + headerLen];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
@@ -533,6 +598,8 @@ public class Streaming {
                             byte localFrameId = 0;
                             long prevTime = 0;
 
+                            responseTimeServer = getResponseTime();
+
                             while(true){
                                 try {
                                     //Drawable drawable = getResources().getDrawable(getResources().getIdentifier("img1.jpeg", "drawable", getPackageName()));
@@ -573,6 +640,59 @@ public class Streaming {
             }
         }
 
+        public int getResponseTime(){
+            int prevTimeOut=1;
+            int maxRespTime = 10000;
+            long tempResponseTime = maxRespTime;
+            int retriesNum = 5;
+            byte[] msg= respTimeMsg.getBytes(StandardCharsets.UTF_8);
+            byte[] txBuffer = new byte[headerLen+msg.length];
+            byte[] txBufferReceive = new byte[headerLen+msg.length];
+            constructDataIntoBuffer(msg, txBuffer, 0, msg.length,
+                    (short)msg.length, (short)1, (byte)0, (short)0);
+            DatagramPacket dp ;
+            DatagramPacket dp1;
+            long timeStart= 0;
+
+            while(retriesNum>0 && tempResponseTime >= maxRespTime) {
+                retriesNum--;
+
+                try {
+                    prevTimeOut = phoneSocketSendDataTest.getSoTimeout();
+                    dp = new DatagramPacket(txBuffer, headerLen + msg.length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                    timeStart= System.currentTimeMillis();
+                    phoneSocketSendDataTest.send(dp);
+                } catch (Exception e) {
+                    Log.d("Myti", "Exception into getResponseTime function, send message");
+                    e.printStackTrace();
+                    continue;   //Zero means Error
+                }
+
+                try {
+                    phoneSocketSendDataTest.setSoTimeout(maxRespTime);
+                    try {
+                        //Arrays.fill(txBuffer, (byte) 0);
+                        DatagramPacket phoneDpReceive = new DatagramPacket(txBufferReceive, txBufferReceive.length);
+                        //phoneSocketSendDataTest.getSoTimeout();
+                        phoneSocketSendDataTest.receive(phoneDpReceive);
+                    } catch (Exception e) {
+                        Log.d("Myti", "Exception into getResponseTime function, receive message");
+                        e.printStackTrace();
+                    }
+                    tempResponseTime = System.currentTimeMillis()-timeStart;
+                    phoneSocketSendDataTest.setSoTimeout(prevTimeOut);
+                    //Resent a package to client to calculate also the response time
+                    dp1 = new DatagramPacket(txBuffer, headerLen + msg.length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                    phoneSocketSendDataTest.send(dp1);
+                } catch (Exception e) {
+                    Log.d("Myti", "Exception into getResponseTime function, set timeOut");
+                    e.printStackTrace();
+                }
+
+            }
+
+            return (int) tempResponseTime;
+        }
 
         public void sendDataUdp(byte[] frame, int frameSize, int frameId, byte localFrameId) {
             short packetsNumber = 0;  //The number of packets after splitting all the frame
@@ -600,7 +720,6 @@ public class Streaming {
                 //Construct the data inside the buffer
                 constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
                                         currentPacketDataLen, packetsNumber, localFrameId, packetId);
-
 
                 SimulateError(txBuffer,100,0);
 
