@@ -43,8 +43,7 @@ public class Streaming {
     public class CommunicationReceiveThread implements Runnable {
         public DatagramSocket phoneSocket;
         public int phonePort;
-        byte[] startFrameDelimiter = {10, 10, 5, 10, 10};
-        byte[] startPacketDelimiter = {5, 50, 5, 50, 50};
+
         private byte buf[] = new byte[datagramPacketLength];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
 
@@ -98,8 +97,7 @@ public class Streaming {
         int responseTimePhone;
 
 
-
-        public CommunicationReceiveThread(Activity mainActivity, ArrayList<View> listViewObjects) {
+        public CommunicationReceiveThread(Activity mainActivity, ArrayList<View> listViewObjects){
             try {
                 phonePort = 8081;
                 phoneSocket = new DatagramSocket(phonePort);
@@ -357,7 +355,7 @@ public class Streaming {
                         try {
                             //Arrays.fill(txBuffer, (byte) 0);
                             DatagramPacket phoneDpReceive = new DatagramPacket(txBufferReceive, txBufferReceive.length);
-                            //phoneSocketSendDataTest.getSoTimeout();
+                            //serverSocketSendDataTest.getSoTimeout();
                             phoneSocket.receive(phoneDpReceive);
                         } catch (Exception e) {
                             Log.d("Myti", "Exception into getResponseTime function into Phone thread receive, receive message");
@@ -550,9 +548,18 @@ public class Streaming {
 
     public class TestSendDataCommunicationThread extends AppCompatActivity implements Runnable {
         private Context context;
-        public DatagramSocket phoneSocketSendDataTest;
-        public int phonePortSendDataTest;
+        //This is the socket int the server side(esp32) from which we send the data
+        public DatagramSocket serverSocketSendDataTest;
+
+        //This is the socket int the server side(esp32) from which we send the data for checking the response time between client and the server
+        public DatagramSocket serverSocketSReceiveResponseTimeTest;
+
+        //The port is the specified port in the client side to which we send the data,
+        //we know that port in advance, or after communicating with the client by any means
+        public int serverPortSendDataTest;
+
         public int responseTimeServer;
+        public int serverPortReceiveResponseTimeTest;
         /*
         private byte buf[] = new byte[packetLen + headerLen];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
@@ -575,11 +582,13 @@ public class Streaming {
         public TestSendDataCommunicationThread(ImageView imageView, InetAddress localIP, Context current) {
             try {
                 this.context = current;
-                phonePortSendDataTest = 8000;
-                phoneSocketSendDataTest = new DatagramSocket(phonePortSendDataTest);
-                phoneSocketSendDataTest.setSoTimeout(notificationMsgWaitTime);  // Set socket timeout, how much to wait for notification messages
+                serverPortSendDataTest = 8000;
+                serverSocketSendDataTest = new DatagramSocket(serverPortSendDataTest);
+                serverSocketSendDataTest.setSoTimeout(notificationMsgWaitTime);  // Set socket timeout, how much to wait for notification messages
                 phoneIpReceiveDataTest = localIP;
                 phonePortReceiveDataTest = 8081;
+                serverPortReceiveResponseTimeTest = 8082;
+                serverSocketSReceiveResponseTimeTest = new DatagramSocket(serverPortReceiveResponseTimeTest);
 
             } catch (IOException e) {
                 Log.e("Myti", "Exception in photoCallback", e);
@@ -589,7 +598,7 @@ public class Streaming {
 
         public void run() {
             try {
-                if (null != phoneSocketSendDataTest) {
+                if (null != serverSocketSendDataTest) {
                     new Thread(new Runnable() {
                         @Override
                         public void run() {
@@ -600,7 +609,13 @@ public class Streaming {
 
                             responseTimeServer = getResponseTime();
 
+                            long checkResponseTime = System.currentTimeMillis();
                             while(true){
+                                //Check each 5 sec the response time between server and client
+                                if(System.currentTimeMillis() - checkResponseTime > 5){
+                                    responseTimeServer = getResponseTime();
+                                }
+
                                 try {
                                     //Drawable drawable = getResources().getDrawable(getResources().getIdentifier("img1.jpeg", "drawable", getPackageName()));
                                     for (int i = 0; i < 3; i++) {
@@ -612,7 +627,7 @@ public class Streaming {
                                             ByteArrayOutputStream baos = new ByteArrayOutputStream();
                                             bMap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
                                             dataImages[i] = baos.toByteArray();
-                                            long timeInterval = 31; //31.25 fps for 31 milliseconds intervals
+                                            long timeInterval = 1; //31.25 fps for 31 milliseconds intervals
                                             long timeWait = timeInterval - (System.currentTimeMillis()-prevTime);
                                             if (timeWait > 0)
                                                 Thread.sleep(timeWait);
@@ -658,10 +673,10 @@ public class Streaming {
                 retriesNum--;
 
                 try {
-                    prevTimeOut = phoneSocketSendDataTest.getSoTimeout();
+                    prevTimeOut = serverSocketSReceiveResponseTimeTest.getSoTimeout();
                     dp = new DatagramPacket(txBuffer, headerLen + msg.length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                     timeStart= System.currentTimeMillis();
-                    phoneSocketSendDataTest.send(dp);
+                    serverSocketSReceiveResponseTimeTest.send(dp);
                 } catch (Exception e) {
                     Log.d("Myti", "Exception into getResponseTime function, send message");
                     e.printStackTrace();
@@ -669,21 +684,21 @@ public class Streaming {
                 }
 
                 try {
-                    phoneSocketSendDataTest.setSoTimeout(maxRespTime);
+                    serverSocketSReceiveResponseTimeTest.setSoTimeout(maxRespTime);
                     try {
                         //Arrays.fill(txBuffer, (byte) 0);
                         DatagramPacket phoneDpReceive = new DatagramPacket(txBufferReceive, txBufferReceive.length);
-                        //phoneSocketSendDataTest.getSoTimeout();
-                        phoneSocketSendDataTest.receive(phoneDpReceive);
+                        //serverSocketSendDataTest.getSoTimeout();
+                        serverSocketSReceiveResponseTimeTest.receive(phoneDpReceive);
                     } catch (Exception e) {
                         Log.d("Myti", "Exception into getResponseTime function, receive message");
                         e.printStackTrace();
                     }
                     tempResponseTime = System.currentTimeMillis()-timeStart;
-                    phoneSocketSendDataTest.setSoTimeout(prevTimeOut);
+                    serverSocketSReceiveResponseTimeTest.setSoTimeout(prevTimeOut);
                     //Resent a package to client to calculate also the response time
                     dp1 = new DatagramPacket(txBuffer, headerLen + msg.length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
-                    phoneSocketSendDataTest.send(dp1);
+                    serverSocketSReceiveResponseTimeTest.send(dp1);
                 } catch (Exception e) {
                     Log.d("Myti", "Exception into getResponseTime function, set timeOut");
                     e.printStackTrace();
@@ -726,7 +741,7 @@ public class Streaming {
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 try {
-                    phoneSocketSendDataTest.send(dp);
+                    serverSocketSendDataTest.send(dp);
                 }catch (Exception e){
                     Log.d("Myti", "Exception server not ip for client");
                     e.printStackTrace();
@@ -738,8 +753,8 @@ public class Streaming {
             while (true){
                 try {
                     DatagramPacket phoneDpReceive = new DatagramPacket(buffConfirm, buffConfirm.length);
-                    //phoneSocketSendDataTest.getSoTimeout();
-                    phoneSocketSendDataTest.receive(phoneDpReceive);
+                    //serverSocketSendDataTest.getSoTimeout();
+                    serverSocketSendDataTest.receive(phoneDpReceive);
                     //phoneDpReceive.getData();
 
                     short tempPacketId = buffConfirm[0];
@@ -761,7 +776,7 @@ public class Streaming {
 
                         DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                         try {
-                            phoneSocketSendDataTest.send(dp);
+                            serverSocketSendDataTest.send(dp);
                         }catch (Exception e){
                             Log.d("Myti", "Exception server not ip for client");
                             e.printStackTrace();
