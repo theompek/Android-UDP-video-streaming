@@ -96,7 +96,7 @@ public class Streaming {
         boolean skipIteration = false;
         int responseTimePhone;
 
-
+        //-------------------------------------------CLIENT----------------------------------------
         public CommunicationReceiveThread(Activity mainActivity, ArrayList<View> listViewObjects){
             try {
                 phonePort = 8081;
@@ -192,7 +192,6 @@ public class Streaming {
                     }
 
                     //if (checkSums[0] != receivedCheckSum[0]) skipIteration=true;
-
                     if (currentFrameIsBroken) skipIteration=true;
 
                     if(skipIteration) {
@@ -228,7 +227,7 @@ public class Streaming {
                     }
                     */
 
-                    if(checkResponseTime()) continue;
+                    if(checkRequestForResponseTime()) continue;
 
                     if (localFrameId >= maxImagesStored || localFrameId < 0) {
                         //The other values from the header can be used so as the frame be restored, for example we
@@ -267,7 +266,6 @@ public class Streaming {
                                 FramesBuffer[i].initiateFrame();
                         }
                         prevLocalFrameId = localFrameId;
-
 
                         //System.arraycopy( currentPacketData, 0, imagesObj[localFrameId].buffer, destPos, currentPacketLength);
                         //Save photo
@@ -329,7 +327,7 @@ public class Streaming {
             }
         }
 
-        public boolean checkResponseTime(){
+        public boolean checkRequestForResponseTime(){
             if(packetDataSize < customMsgFromServerNum) {
                 int prevTimeOut=1;
                 int maxRespTime = 100;
@@ -546,6 +544,8 @@ public class Streaming {
 
     }
 
+    //-------------------------------------------SERVER-------------------------------------------
+
     public class TestSendDataCommunicationThread extends AppCompatActivity implements Runnable {
         private Context context;
         //This is the socket int the server side(esp32) from which we send the data
@@ -558,6 +558,7 @@ public class Streaming {
         //we know that port in advance, or after communicating with the client by any means
         public int serverPortSendDataTest;
 
+        public  int maxRespTime = 100;
         public int responseTimeServer;
         public int serverPortReceiveResponseTimeTest;
         /*
@@ -608,12 +609,26 @@ public class Streaming {
                             long prevTime = 0;
 
                             responseTimeServer = getResponseTime();
+                            notificationMsgWaitTime = responseTimeServer +1;
+                            try {
+                                // Set socket timeout, how much to wait for notification messages
+                                serverSocketSendDataTest.setSoTimeout(notificationMsgWaitTime);
+                            }catch (IOException e) {
+                            Log.e("Myti", "Exception in photoCallback", e);
+                            }
 
                             long checkResponseTime = System.currentTimeMillis();
                             while(true){
                                 //Check each 5 sec the response time between server and client
                                 if(System.currentTimeMillis() - checkResponseTime > 5){
                                     responseTimeServer = getResponseTime();
+                                    notificationMsgWaitTime = responseTimeServer +1;
+                                    try {
+                                        // Set socket timeout, how much to wait for notification messages
+                                        serverSocketSendDataTest.setSoTimeout(notificationMsgWaitTime);
+                                    }catch (IOException e) {
+                                        Log.e("Myti", "Exception in photoCallback", e);
+                                    }
                                 }
 
                                 try {
@@ -627,7 +642,7 @@ public class Streaming {
                                             ByteArrayOutputStream baos = new ByteArrayOutputStream();
                                             bMap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
                                             dataImages[i] = baos.toByteArray();
-                                            long timeInterval = 1; //31.25 fps for 31 milliseconds intervals
+                                            long timeInterval = 10; //31.25 fps for 31 milliseconds intervals
                                             long timeWait = timeInterval - (System.currentTimeMillis()-prevTime);
                                             if (timeWait > 0)
                                                 Thread.sleep(timeWait);
@@ -657,7 +672,6 @@ public class Streaming {
 
         public int getResponseTime(){
             int prevTimeOut=1;
-            int maxRespTime = 10000;
             long tempResponseTime = maxRespTime;
             int retriesNum = 5;
             byte[] msg= respTimeMsg.getBytes(StandardCharsets.UTF_8);
@@ -706,7 +720,7 @@ public class Streaming {
 
             }
 
-            return (int) tempResponseTime;
+            return (int) (tempResponseTime >= maxRespTime ? 0:tempResponseTime);
         }
 
         public void sendDataUdp(byte[] frame, int frameSize, int frameId, byte localFrameId) {
@@ -736,7 +750,7 @@ public class Streaming {
                 constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
                                         currentPacketDataLen, packetsNumber, localFrameId, packetId);
 
-                SimulateError(txBuffer,100,0);
+                SimulateError(txBuffer,50,1);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
