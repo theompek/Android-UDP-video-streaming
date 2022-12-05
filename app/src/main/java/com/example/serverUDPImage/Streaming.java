@@ -205,7 +205,7 @@ public class Streaming {
                         }
 
                         int d = tempData.length;
-
+                        continue;
                     }
 
                     //checkSums = CalcCheckSumsCustomPositions(datagramData, NumOfChkSums, headerLen + packetDataSize);
@@ -782,7 +782,7 @@ public class Streaming {
                 constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
                                         currentPacketDataLen, packetsNumber, localFrameId, packetId,defaultResendPacketCode);
 
-                SimulateError(txBuffer,100,2);
+                SimulateError(txBuffer,10,2);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
@@ -851,6 +851,7 @@ public class Streaming {
             // Initialize array
             Arrays.fill(txBuffer, (byte) 0);
 
+            //Check the resend packet code and adjust the data needed to be resend accordingly
             if(resendPacket!=defaultResendPacketCode && false){
                 boolean[] pos = {false, false, false, false};
                 int startPos = 0;
@@ -884,6 +885,7 @@ public class Streaming {
 
 
             }
+
             //Copy the piece of frame into txBuffer
             System.arraycopy( frame, packetOffset, txBuffer, headerLen, currentPacketDataLen);
 
