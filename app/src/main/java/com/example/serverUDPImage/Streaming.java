@@ -32,7 +32,7 @@ import java.util.Random;
 public class Streaming {
     int packetsDataLength = 920;
     int datagramPacketLength = 1024;
-    byte maxImagesStored = 100;
+    int maxImagesStored = 1000;
     byte headerLen = 26;
     int reservedBytesNum = 5;
     int NumOfChkSums = 4;
@@ -716,7 +716,7 @@ public class Streaming {
                                             ByteArrayOutputStream baos = new ByteArrayOutputStream();
                                             bMap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
                                             dataImages[i] = baos.toByteArray();
-                                            long timeInterval = 10; //31.25 fps for 31 milliseconds intervals
+                                            long timeInterval = 5; //31.25 fps for 31 milliseconds intervals
                                             long timeWait = timeInterval - (System.currentTimeMillis()-prevTime);
                                             if (timeWait > 0)
                                                 Thread.sleep(timeWait);
@@ -824,8 +824,8 @@ public class Streaming {
                 constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
                                         currentPacketDataLen, packetsNumber, localFrameId, packetId,defaultResendPacketCode);
 
-                //if(packetId == 10)
-                SimulateError(txBuffer,10,1);
+                if(packetId == -1)
+                SimulateError(txBuffer,0,1);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen[0], phoneIpReceiveDataTest, phonePortReceiveDataTest);
