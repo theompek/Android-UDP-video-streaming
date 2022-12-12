@@ -555,7 +555,7 @@ public class Streaming {
                                             ByteArrayOutputStream baos = new ByteArrayOutputStream();
                                             bMap.compress(Bitmap.CompressFormat.JPEG, 100, baos);
                                             dataImages[i] = baos.toByteArray();
-                                            long timeInterval = 31; //31.25 fps for 31 milliseconds intervals
+                                            long timeInterval = 10; //31.25 fps for 31 milliseconds intervals
                                             long timeWait = timeInterval - (System.currentTimeMillis()-prevTime);
                                             if (timeWait > 0)
                                                 Thread.sleep(timeWait);
@@ -613,7 +613,7 @@ public class Streaming {
                                         currentPacketDataLen, packetsNumber, localFrameId, packetId);
 
 
-                SimulateError(txBuffer,100,10, delimiterLen);
+                SimulateError(txBuffer,0,10, delimiterLen);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
