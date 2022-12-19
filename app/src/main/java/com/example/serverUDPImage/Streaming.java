@@ -757,7 +757,7 @@ public class Streaming {
                         currentPacketDataLen, packetsNumber, localFrameId, packetId,defaultResendPacketCode);
 
                 if(packetId < 10)
-                    SimulateError(txBuffer,100,1);
+                    SimulateError(txBuffer,100,500);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen[0], phoneIpReceiveDataTest, phonePortReceiveDataTest);
@@ -882,20 +882,20 @@ public class Streaming {
         }
 
         int i=0;
-        dataBuffer[checkSumPositions[i]+1] = -1;
-        dataBuffer[checkSumPositions[i]+2] = -1;
+        dataBuffer[checkSumPositions[i]+1] = 44;
+        dataBuffer[checkSumPositions[i]+2] = 44;
 
         i++;
-        dataBuffer[checkSumPositions[i]+1] = -1;
-        dataBuffer[checkSumPositions[i]+2] = -1;
+        dataBuffer[checkSumPositions[i]+1] = 44;
+        dataBuffer[checkSumPositions[i]+2] = 44;
 
         i++;
-        dataBuffer[checkSumPositions[i]+1] = -1;
-        dataBuffer[checkSumPositions[i]+2] = -1;
+        dataBuffer[checkSumPositions[i]+1] = 33;
+        dataBuffer[checkSumPositions[i]+2] = 12;
 
         i++;
-        dataBuffer[checkSumPositions[i]+1] = -1;
-        dataBuffer[checkSumPositions[i]+2] = -1;
+        dataBuffer[checkSumPositions[i]+1] = 65;
+        dataBuffer[checkSumPositions[i]+2] = 56;
     }
 
     // Split the datagramData into chkSumsNum equal of length pieces and calculate for each the checkSum
@@ -944,7 +944,7 @@ public class Streaming {
             if (endPos > currentPacketLength)  endPos = currentPacketLength;
 
             for (int byteI = startPos; byteI < endPos; byteI++) {
-                checkSum += Byte.toUnsignedInt(datagramData[byteI]);
+                checkSum += Byte.toUnsignedInt(datagramData[byteI])+byteI&Byte.toUnsignedInt(datagramData[byteI]);
             }
 
             // Add all checksum bytes
