@@ -21,6 +21,8 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -30,17 +32,21 @@ import java.util.Random;
 public class Streaming {
     int packetsDataLength = 920;
     int datagramPacketLength = 1024;
-    byte maxImagesStored = 100;
-    byte headerLen = 21;
+    int maxImagesStored = 100;
+    byte headerLen = 26;
+    int reservedBytesNum = 5;
     int NumOfChkSums = 4;
     int confirmationMessageLen = 8;
+    String respTimeMsg = "RESPONSE_TIME_REQUEST";
+    int customMsgFromServerNum = 101;
+    int[] checkSumPositions = {headerLen,256,512,768,1024};
+    byte defaultResendPacketCode = (byte) 0b11111111;
 
     public class CommunicationReceiveThread implements Runnable {
         public DatagramSocket phoneSocket;
         public int phonePort;
-        byte[] startFrameDelimiter = {10, 10, 5, 10, 10};
-        byte[] startPacketDelimiter = {5, 50, 5, 50, 50};
-        private byte buf[] = new byte[datagramPacketLength];
+
+        private byte[] buf = new byte[datagramPacketLength];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
 
         Queue<FrameReceivedObject> imagesQueue = new LinkedList<>();
@@ -57,6 +63,7 @@ public class Streaming {
         byte packetType;
         static final byte imageType = 0;
         static final byte audioType = 1;
+        byte packetResend;
         int packetDataSize;
         int frameId;
         int packetsNumber;
@@ -89,10 +96,19 @@ public class Streaming {
         int ackBuffLen = 1+4+1+1;  // packetId(1), frameId(4), localFrameId(1), errorPart(1)
         byte ACKPacketBf[] = new byte[ackBuffLen];
         byte errorPart = 0;
-        boolean skipIteration = false;
+        boolean packetIsCorrupted = false;
+        boolean restoreCorruptedPacket = false;
+        int corruptedPacketLength = 0;
+        int responseTimePhone;
+
+        //Resend data parts positions
+        boolean[] pos = {false, false, false, false};
+        //boolean pos5=false;
+        //boolean pos6=false;
 
 
-        public CommunicationReceiveThread(Activity mainActivity, ArrayList<View> listViewObjects) {
+        //-------------------------------------------CLIENT----------------------------------------
+        public CommunicationReceiveThread(Activity mainActivity, ArrayList<View> listViewObjects){
             try {
                 phonePort = 8081;
                 phoneSocket = new DatagramSocket(phonePort);
@@ -116,7 +132,7 @@ public class Streaming {
         public int findDelimiter(byte[] data, byte[] delimiter) {
             int i = headerLen;
             int j = 0;
-            while (i < data.length) {
+            while (i < (data.length-delimiter.length)) {
                 for (j = 0; j < delimiter.length; j++) {
                     if (i + j >= data.length) return -1;
                     if (data[i + j] != delimiter[j]) break;
@@ -140,23 +156,11 @@ public class Streaming {
                     //Arrays.fill(datagramData, (byte) 0);
                     phoneSocket.receive(phoneDpReceive);
                     datagramData = phoneDpReceive.getData();
-                    skipIteration = false;
-                    //Find frame start
-                    if (searchFrame) {
-                        frStart = findDelimiter(datagramData, startFrameDelimiter);
-                        if (frStart == -1) continue;
-                        searchFrame = false;
-                        delimiterLength = startFrameDelimiter.length;
-                    } else {
-                        frStart = findDelimiter(datagramData, startPacketDelimiter);
-                        searchFrame = false;
-                        if (frStart == -1) continue;
-                        delimiterLength = startPacketDelimiter.length;
-                    }
+                    packetIsCorrupted = false;
 
                     /* currentPacketLength = phoneDpReceive.getLength() - frStart - delimiterLength;
                     System.arraycopy(datagramData, frStart + delimiterLength, currentPacketData, 0, currentPacketLength);*/
-                    header = Arrays.copyOfRange(datagramData, frStart - headerLen, headerLen);
+                    header = Arrays.copyOfRange(datagramData, 0, headerLen);
                     //For image we send 0b00000000 and for audio 0b11111111, because of the udp bits corruption
                     //we count the number of 1 in the byte. 0, 1, 2, 3 number of 1 means image type
                     //and 4, 5, 6, 7 ,8 number of 1 means audio type.
@@ -166,29 +170,31 @@ public class Streaming {
                             ((header[6] & 0x00ff) << 8) | (header[5] & 0xff);
                     packetsNumber = header[9] & 0xff;
                     packetId = (header[10] & 0xff);
-                    packetDataSize = ((header[14] & 0xff) << 8) | (header[13] & 0xff);  //Only the frame data of the packet, without header and delimiter
+                    packetDataSize = ((header[14] & 0xff) << 8) | (header[13] & 0xff);  //Only the frame data of the packet, without header
                     localFrameId = (header[15] & 0xff);
                     packetType = Integer.bitCount(header[16]) > 3 ? audioType : imageType;
+                    packetResend = (byte)(header[21] & 0xff);
 
                     displayStatistics(mainActivity);
                     displayStat_bo = false; // We can not display statistics if we are in the middle of a frame
 
                     currentFrameIsBroken = false;
+                    corruptedPacketLength = 0;
 
                     //Check the CheckSum to insure the integrity of the data
                     for (int i=0;i<NumOfChkSums;i++) {
                         //Get received checkSums
-                        receivedCheckSum[i] = datagramData[headerLen - NumOfChkSums + i];
+                        receivedCheckSum[i] = datagramData[headerLen-NumOfChkSums- reservedBytesNum +i];
 
                         //Set to zero the checkSum fields and calculate the checksum of the current packet
-                        datagramData[headerLen - NumOfChkSums + i] = 0;
+                        datagramData[headerLen-NumOfChkSums-reservedBytesNum +i] = 0;
                     }
 
-                    checkSums = CalcCheckSums(datagramData, NumOfChkSums, frStart + delimiterLength + packetDataSize);
+                    checkSums = CalcCheckSums(datagramData, NumOfChkSums, headerLen + packetDataSize);
 
                     //Calculate Packet Error Rate And errors in packet, we divide the received packet into 'NumOfChkSums' number of chunks
                     PCount += NumOfChkSums;
-                    Kbps += packetDataSize + headerLen + delimiterLength;
+                    Kbps += packetDataSize + headerLen;
                     errorPart = 0;
                     for (int i=0;i<NumOfChkSums;i++) {
                         if (checkSums[i] != receivedCheckSum[i]){
@@ -198,11 +204,11 @@ public class Streaming {
                         }
                     }
 
-                    //if (checkSums[0] != receivedCheckSum[0]) skipIteration=true;
+                    //if (checkSums[0] != receivedCheckSum[0]) packetIsCorrupted=true;
+                    if (currentFrameIsBroken) packetIsCorrupted =true;
 
-                    if (currentFrameIsBroken) skipIteration=true;
 
-                    if(skipIteration) {
+                    if(packetIsCorrupted) {
                         //Send message back to the server (esp32 board)
                         ACKPacketBf[0] = header[10];    //packetId
                         ACKPacketBf[1] = header[1];     //frameId1
@@ -216,12 +222,15 @@ public class Streaming {
                         phoneSocket.send(dp);
                     }
 
-                    if(skipIteration){
+                    if(packetIsCorrupted){
                         continue;
                     }
                     else{
                         KbpsSucceed += packetDataSize + headerLen + delimiterLength;
                     }
+
+
+                   //if(checkRequestForResponseTime()) continue;
 
                     if (localFrameId >= maxImagesStored || localFrameId < 0) {
                         //The other values from the header can be used so as the frame be restored, for example we
@@ -241,7 +250,12 @@ public class Streaming {
                         continue;
                     }
 
-                    System.arraycopy(datagramData, frStart + delimiterLength, currentPacketData, 0, packetDataSize);
+                    if(!restoreCorruptedPacket){
+
+                        System.arraycopy(datagramData, headerLen, currentPacketData, 0, packetDataSize);
+                    }
+
+
                     //FramesBuffer[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
                     FramesBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId);
 
@@ -321,6 +335,51 @@ public class Streaming {
 
             }
         }
+
+        public boolean checkRequestForResponseTime(){
+            if(packetDataSize < customMsgFromServerNum) {
+                int prevTimeOut=1;
+                int maxRespTime = 100;
+                byte[] msg= respTimeMsg.getBytes(StandardCharsets.UTF_8);
+                byte[] txBufferReceive = new byte[headerLen+msg.length];
+                long timeStart = 0;
+                String msgFromServer = new String(Arrays.copyOfRange(datagramData, headerLen, headerLen + packetDataSize), Charset.forName("UTF-8"));
+
+                if (respTimeMsg.equals(msgFromServer)) {
+                    DatagramPacket dp = new DatagramPacket(ACKPacketBf, ACKPacketBf.length, phoneDpReceive.getAddress(), phoneDpReceive.getPort());
+
+                    try {
+                        prevTimeOut = phoneSocket.getSoTimeout();
+                        timeStart = System.currentTimeMillis();
+                        phoneSocket.send(dp);
+                    } catch (Exception e) {
+                        Log.d("Myti", "Exception into getResponseTime function into Phone thread receive, send message");
+                        e.printStackTrace();
+                    }
+
+                    try {
+                        phoneSocket.setSoTimeout(maxRespTime);
+                        try {
+                            //Arrays.fill(txBuffer, (byte) 0);
+                            DatagramPacket phoneDpReceive = new DatagramPacket(txBufferReceive, txBufferReceive.length);
+                            //serverSocketSendDataTest.getSoTimeout();
+                            phoneSocket.receive(phoneDpReceive);
+                        } catch (Exception e) {
+                            Log.d("Myti", "Exception into getResponseTime function into Phone thread receive, receive message");
+                            e.printStackTrace();
+                        }
+                        responseTimePhone = (int) (System.currentTimeMillis() - timeStart);
+                        phoneSocket.setSoTimeout(prevTimeOut);
+                    } catch (Exception e) {
+                        Log.d("Myti", "Exception into getResponseTime function into Phone thread receive, set timeOut");
+                        e.printStackTrace();
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+
 
         @SuppressLint("SetTextI18n")
         public void displayStatistics(Activity mainActivity){
@@ -494,10 +553,23 @@ public class Streaming {
 
     }
 
+    //-------------------------------------------SERVER-------------------------------------------
+
     public class TestSendDataCommunicationThread extends AppCompatActivity implements Runnable {
         private Context context;
-        public DatagramSocket phoneSocketSendDataTest;
-        public int phonePortSendDataTest;
+        //This is the socket int the server side(esp32) from which we send the data
+        public DatagramSocket serverSocketSendDataTest;
+
+        //This is the socket int the server side(esp32) from which we send the data for checking the response time between client and the server
+        public DatagramSocket serverSocketSReceiveResponseTimeTest;
+
+        //The port is the specified port in the client side to which we send the data,
+        //we know that port in advance, or after communicating with the client by any means
+        public int serverPortSendDataTest;
+
+        public  int maxRespTime = 100;
+        public int responseTimeServer=0;
+        public int serverPortReceiveResponseTimeTest;
         /*
         private byte buf[] = new byte[packetLen + headerLen];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
@@ -515,16 +587,18 @@ public class Streaming {
         // This can be set to a specific value after measuring the response time
         // between the server and the client.
         int notificationMsgWaitTime = 1; // 1ms
-
+        long checkResponseTime;
 
         public TestSendDataCommunicationThread(ImageView imageView, InetAddress localIP, Context current) {
             try {
                 this.context = current;
-                phonePortSendDataTest = 8000;
-                phoneSocketSendDataTest = new DatagramSocket(phonePortSendDataTest);
-                phoneSocketSendDataTest.setSoTimeout(notificationMsgWaitTime);  // Set socket timeout, how much to wait for notification messages
+                serverPortSendDataTest = 8000;
+                serverSocketSendDataTest = new DatagramSocket(serverPortSendDataTest);
+                serverSocketSendDataTest.setSoTimeout(notificationMsgWaitTime);  // Set socket timeout, how much to wait for notification messages
                 phoneIpReceiveDataTest = localIP;
                 phonePortReceiveDataTest = 8081;
+                serverPortReceiveResponseTimeTest = 8082;
+                serverSocketSReceiveResponseTimeTest = new DatagramSocket(serverPortReceiveResponseTimeTest);
 
             } catch (IOException e) {
                 Log.e("Myti", "Exception in photoCallback", e);
@@ -534,7 +608,7 @@ public class Streaming {
 
         public void run() {
             try {
-                if (null != phoneSocketSendDataTest) {
+                if (null != serverSocketSendDataTest) {
                     new Thread(new Runnable() {
                         @Override
                         public void run() {
@@ -583,42 +657,93 @@ public class Streaming {
             }
         }
 
+        public int getResponseTime(){
+            int prevTimeOut=1;
+            long tempResponseTime = maxRespTime;
+            int retriesNum = 5;
+            byte[] msg= respTimeMsg.getBytes(StandardCharsets.UTF_8);
+            byte[] txBuffer = new byte[headerLen+msg.length];
+            byte[] txBufferReceive = new byte[headerLen+msg.length];
+            constructDataIntoBuffer(msg, txBuffer, 0, msg.length, (new short[]{(short)msg.length}),
+                    (short)1, (byte)0, (short)0, defaultResendPacketCode);
+            DatagramPacket dp ;
+            DatagramPacket dp1;
+            long timeStart= 0;
+
+            while(retriesNum>0 && tempResponseTime >= maxRespTime) {
+                retriesNum--;
+
+                try {
+                    prevTimeOut = serverSocketSReceiveResponseTimeTest.getSoTimeout();
+                    dp = new DatagramPacket(txBuffer, headerLen + msg.length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                    timeStart= System.currentTimeMillis();
+                    serverSocketSReceiveResponseTimeTest.send(dp);
+                } catch (Exception e) {
+                    Log.d("Myti", "Exception into getResponseTime function, send message");
+                    e.printStackTrace();
+                    continue;   //Zero means Error
+                }
+
+                try {
+                    serverSocketSReceiveResponseTimeTest.setSoTimeout(maxRespTime);
+                    try {
+                        //Arrays.fill(txBuffer, (byte) 0);
+                        DatagramPacket phoneDpReceive = new DatagramPacket(txBufferReceive, txBufferReceive.length);
+                        //serverSocketSendDataTest.getSoTimeout();
+                        serverSocketSReceiveResponseTimeTest.receive(phoneDpReceive);
+                    } catch (Exception e) {
+                        Log.d("Myti", "Exception into getResponseTime function, receive message");
+                        e.printStackTrace();
+                    }
+                    tempResponseTime = System.currentTimeMillis()-timeStart;
+                    serverSocketSReceiveResponseTimeTest.setSoTimeout(prevTimeOut);
+                    //Resent a package to client to calculate also the response time
+                    dp1 = new DatagramPacket(txBuffer, headerLen + msg.length, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                    serverSocketSReceiveResponseTimeTest.send(dp1);
+                } catch (Exception e) {
+                    Log.d("Myti", "Exception into getResponseTime function, set timeOut");
+                    e.printStackTrace();
+                }
+
+            }
+
+            return (int) (tempResponseTime >= maxRespTime ? 0:tempResponseTime);
+        }
 
         public void sendDataUdp(byte[] frame, int frameSize, int frameId, byte localFrameId) {
-            byte delimiterLen = 5;
             short packetsNumber = 0;  //The number of packets after splitting all the frame
             short packetId = 0;       //The ID number(counter) of the current packet
             short lastPacketLen = 0;     //The last packet has usually smaller length than other because is truncated
-            short currentPacketDataLen;
+            short[] currentPacketDataLen = new short[1];
             byte[] txBuffer = new byte[datagramPacketLength];
             //frameId //The ID number(counter) of the current frame(all picture)
-            byte buffConfirm[] = new byte[confirmationMessageLen];
+            byte[] buffConfirm = new byte[confirmationMessageLen];
 
-            currentPacketDataLen = (short) (packetsDataLength);
+            currentPacketDataLen[0] = (short) (packetsDataLength);
             packetsNumber = (short)((frameSize/packetsDataLength) + (frameSize%packetsDataLength==0?0:1));
             lastPacketLen = (short)(frameSize - packetsDataLength*((int)(packetsNumber)-1));
 
             if(frameSize<=packetsDataLength){
-                currentPacketDataLen = (short) frameSize;
+                currentPacketDataLen[0] = (short) frameSize;
                 lastPacketLen =(short) frameSize;
                 packetsNumber = 1;
             }
 
             //Send all the frame into packets for the first time
             while(packetId<packetsNumber){
-                if(packetId == packetsNumber-1) currentPacketDataLen = lastPacketLen;
+                if(packetId == packetsNumber-1) currentPacketDataLen[0] = lastPacketLen;
 
                 //Construct the data inside the buffer
-                constructDataIntoBuffer(frame, txBuffer, frameId, frameSize, delimiterLen,
-                                        currentPacketDataLen, packetsNumber, localFrameId, packetId);
+                constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
+                        currentPacketDataLen, packetsNumber, localFrameId, packetId,defaultResendPacketCode);
 
+                if(packetId < 10)
+                    SimulateError(txBuffer,1,1);
 
-                SimulateError(txBuffer,100,10, delimiterLen);
-
-                //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
-                DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen[0], phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 try {
-                    phoneSocketSendDataTest.send(dp);
+                    serverSocketSendDataTest.send(dp);
                 }catch (Exception e){
                     Log.d("Myti", "Exception server not ip for client");
                     e.printStackTrace();
@@ -630,30 +755,30 @@ public class Streaming {
             while (true){
                 try {
                     DatagramPacket phoneDpReceive = new DatagramPacket(buffConfirm, buffConfirm.length);
-                    //phoneSocketSendDataTest.getSoTimeout();
-                    phoneSocketSendDataTest.receive(phoneDpReceive);
+                    //serverSocketSendDataTest.getSoTimeout();
+                    serverSocketSendDataTest.receive(phoneDpReceive);
                     //phoneDpReceive.getData();
 
                     short tempPacketId = buffConfirm[0];
                     int tempFrameId = ((buffConfirm[4] & 0x00ff) << 24) | ((buffConfirm[3] & 0x00ff) << 16) |
-                                ((buffConfirm[2] & 0x00ff) << 8) | (buffConfirm[1] & 0xff);
+                            ((buffConfirm[2] & 0x00ff) << 8) | (buffConfirm[1] & 0xff);
                     byte tempLocalFrameId = buffConfirm[5];
                     byte tempErrorPart = buffConfirm[6];
 
-                    if (tempFrameId == frameId && tempLocalFrameId == localFrameId && tempErrorPart!=0){
+                    if (tempFrameId == frameId && tempLocalFrameId == localFrameId && tempErrorPart!=defaultResendPacketCode){
                         if(tempPacketId == packetsNumber-1){
-                            currentPacketDataLen = lastPacketLen;
+                            currentPacketDataLen[0] = lastPacketLen;
                         }else{
-                            currentPacketDataLen = (short) (packetsDataLength);
+                            currentPacketDataLen[0] = (short) (packetsDataLength);
                         }
 
                         //Construct the data inside the buffer
-                        constructDataIntoBuffer(frame, txBuffer, frameId, frameSize, delimiterLen,
-                                currentPacketDataLen, packetsNumber, localFrameId, tempPacketId);
+                        constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
+                                currentPacketDataLen, packetsNumber, localFrameId, tempPacketId,tempErrorPart);
 
-                        DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
+                        DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen[0], phoneIpReceiveDataTest, phonePortReceiveDataTest);
                         try {
-                            phoneSocketSendDataTest.send(dp);
+                            serverSocketSendDataTest.send(dp);
                         }catch (Exception e){
                             Log.d("Myti", "Exception server not ip for client");
                             e.printStackTrace();
@@ -669,10 +794,10 @@ public class Streaming {
 
         }
 
-        public void constructDataIntoBuffer(byte[] frame, byte[] txBuffer, int frameId,
-                                            int frameSize, int delimiterLen,
-                                            short currentPacketDataLen, short packetsNumber,
-                                            byte localFrameId, short packetId){
+        public void constructDataIntoBuffer(byte[] frame, byte[] txBuffer,
+                                            int frameId, int frameSize,
+                                            short[] currentPacketDataLen, short packetsNumber,
+                                            byte localFrameId, short packetId, byte resendPacket){
 
             //short checkSumsLen = 256;
             byte checkSum[] = {0, 0, 0, 0};
@@ -681,7 +806,7 @@ public class Streaming {
             // Initialize array
             Arrays.fill(txBuffer, (byte) 0);
             //Copy the piece of frame into txBuffer
-            System.arraycopy( frame, packetOffset, txBuffer, headerLen+delimiterLen, currentPacketDataLen);
+            System.arraycopy( frame, packetOffset, txBuffer, headerLen, currentPacketDataLen[0]);
 
             //Header construction
             txBuffer[1] = (byte)(frameId & 0xff);
@@ -696,8 +821,8 @@ public class Streaming {
             txBuffer[10] = (byte)packetId;
             txBuffer[11] = (byte)(packetsDataLength & 0xff);
             txBuffer[12] = (byte)(packetsDataLength>>8 & 0xff);
-            txBuffer[13] = (byte)(currentPacketDataLen & 0xff);
-            txBuffer[14] = (byte)(currentPacketDataLen>>8 & 0xff);
+            txBuffer[13] = (byte)(currentPacketDataLen[0] & 0xff);
+            txBuffer[14] = (byte)(currentPacketDataLen[0]>>8 & 0xff);
             txBuffer[15] = localFrameId;
             txBuffer[16] = imageType;    //Image type
             //CheckSum set to zero
@@ -705,37 +830,31 @@ public class Streaming {
             txBuffer[18] = 0;
             txBuffer[19] = 0;
             txBuffer[20] = 0;
-            // Delimiters for new frame and packets
-            if(packetId == -1){
-                txBuffer[21] = 10;
-                txBuffer[22] = 10;
-                txBuffer[23] = 5;
-                txBuffer[24] = 10;
-                txBuffer[25] = 10;
-            }
-            else {
-                txBuffer[21] = 5;
-                txBuffer[22] = 50;
-                txBuffer[23] = 5;
-                txBuffer[24] = 50;
-                txBuffer[25] = 50;
-            }
+            //Faulty packets positions (is used when we resend the data)
+            txBuffer[21] = resendPacket;
+
+            //Reserved for future data
+            txBuffer[22] = -1;
+            txBuffer[23] = -1;
+            txBuffer[24] = -1;
+            txBuffer[25] = -1;
+
 
             //Calculate checkSums
-            checkSum = CalcCheckSums(txBuffer, NumOfChkSums, headerLen+currentPacketDataLen+delimiterLen);
+            checkSum = CalcCheckSums(txBuffer, NumOfChkSums, headerLen+currentPacketDataLen[0]);
 
             //Store the checkSum into header
             for(int j=0;j<NumOfChkSums;j++) {
-                txBuffer[headerLen-NumOfChkSums + j] = checkSum[j];
+                txBuffer[headerLen-NumOfChkSums- reservedBytesNum + j] = checkSum[j];
             }
 
         }
 
     } // End of class
 
-    public void SimulateError(byte[] dataBuffer, int percentage, int errorsNumber, int delimiterLen){
+    public void SimulateError(byte[] dataBuffer, int percentage, int errorsNumber){
         int max = dataBuffer.length-1;
-        int min = headerLen+delimiterLen;
+        int min = headerLen+1;
         if ((new Random()).nextInt(100) >= (100 - percentage)) {
             for (int i=0;i<errorsNumber;i++) {
                 dataBuffer[(new Random()).nextInt( (max - min) + 1) + min] = (byte) (new Random()).nextInt(255);
@@ -743,7 +862,7 @@ public class Streaming {
         }
     }
 
-   // Split the datagramData into chkSumsNum equal of length pieces and calculate for each the checkSum
+    // Split the datagramData into chkSumsNum equal of length pieces and calculate for each the checkSum
     public byte[] CalcCheckSums(byte[] datagramData, int chkSumsNum, int currentPacketLength)
     {
         int checkSumStep = (int) Math.floor(datagramPacketLength/chkSumsNum);
