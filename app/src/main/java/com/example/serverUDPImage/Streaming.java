@@ -229,8 +229,7 @@ public class Streaming {
                         KbpsSucceed += packetDataSize + headerLen + delimiterLength;
                     }
 
-
-                   //if(checkRequestForResponseTime()) continue;
+                    if(checkRequestForResponseTime()) continue;
 
                     if (localFrameId >= maxImagesStored || localFrameId < 0) {
                         //The other values from the header can be used so as the frame be restored, for example we
@@ -617,7 +616,30 @@ public class Streaming {
                             byte localFrameId = 0;
                             long prevTime = 0;
 
+                            responseTimeServer = getResponseTime();
+                            //notificationMsgWaitTime = responseTimeServer +1;
+                            try {
+                                // Set socket timeout, how much to wait for notification messages
+                                serverSocketSendDataTest.setSoTimeout(notificationMsgWaitTime);
+                            }catch (IOException e) {
+                                Log.e("Myti", "Exception in photoCallback", e);
+                            }
+
+                            checkResponseTime = System.currentTimeMillis();
                             while(true){
+                                //Check each 5 sec the response time between server and client
+                                if(System.currentTimeMillis() - checkResponseTime > 5000){
+                                    responseTimeServer = getResponseTime();
+                                    //notificationMsgWaitTime = responseTimeServer +1;
+                                    try {
+                                        // Set socket timeout, how much to wait for notification messages
+                                        serverSocketSendDataTest.setSoTimeout(notificationMsgWaitTime);
+                                    }catch (IOException e) {
+                                        Log.e("Myti", "Exception in photoCallback", e);
+                                    }
+                                    checkResponseTime = System.currentTimeMillis();
+                                }
+
                                 try {
                                     //Drawable drawable = getResources().getDrawable(getResources().getIdentifier("img1.jpeg", "drawable", getPackageName()));
                                     for (int i = 0; i < 3; i++) {
@@ -738,7 +760,7 @@ public class Streaming {
                         currentPacketDataLen, packetsNumber, localFrameId, packetId,defaultResendPacketCode);
 
                 if(packetId < 10)
-                    SimulateError(txBuffer,1,1);
+                    SimulateError(txBuffer,100,1);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen[0], phoneIpReceiveDataTest, phonePortReceiveDataTest);
