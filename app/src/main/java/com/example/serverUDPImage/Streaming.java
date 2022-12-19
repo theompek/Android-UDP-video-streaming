@@ -613,7 +613,7 @@ public class Streaming {
                                         currentPacketDataLen, packetsNumber, localFrameId, packetId);
 
 
-                SimulateError(txBuffer,0,10, delimiterLen);
+                SimulateError(txBuffer,100,10, delimiterLen);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen+delimiterLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
