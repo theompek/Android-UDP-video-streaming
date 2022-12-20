@@ -33,9 +33,9 @@ public class Streaming {
     int packetsDataLength = 920;
     int datagramPacketLength = 1024;
     int maxImagesStored = 100;
-    byte headerLen = 26;
-    int reservedBytesNum = 5;
-    int NumOfChkSums = 4;
+    byte headerLen = 30;
+    int reservedBytesNum = 4;
+    int NumOfChkSums = 8;
     int confirmationMessageLen = 8;
     String respTimeMsg = "RESPONSE_TIME_REQUEST";
     int customMsgFromServerNum = 101;
@@ -170,7 +170,7 @@ public class Streaming {
                     packetDataSize = ((header[14] & 0xff) << 8) | (header[13] & 0xff);  //Only the frame data of the packet, without header
                     localFrameId = (header[15] & 0xff);
                     packetType = Integer.bitCount(header[16]) > 3 ? audioType : imageType;
-                    packetResend = (byte)(header[21] & 0xff);
+                    packetResend = (byte)(header[17] & 0xff);
 
                     displayStatistics(mainActivity);
                     displayStat_bo = false; // We can not display statistics if we are in the middle of a frame
@@ -194,8 +194,8 @@ public class Streaming {
                     PCount += NumOfChkSums;
                     Kbps += packetDataSize + headerLen;
                     errorPart = 0;
-                    for (int i=0;i<NumOfChkSums;i++) {
-                        if (checkSums[i] != receivedCheckSum[i]){
+                    for (int i=0;i<NumOfChkSums/2;i++) {
+                        if (checkSums[2*i] != receivedCheckSum[2*i] || checkSums[2*i+1] != receivedCheckSum[2*i+1]){
                             PErrors++;
                             currentFrameIsBroken= true;
                             errorPart = (byte) (errorPart | (1<<i));
@@ -756,8 +756,8 @@ public class Streaming {
                 constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
                         currentPacketDataLen, packetsNumber, localFrameId, packetId,defaultResendPacketCode);
 
-                if(packetId < 10)
-                    SimulateError(txBuffer,100,500);
+                //if(packetId < 10)
+                    SimulateError(txBuffer,10,5);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen[0], phoneIpReceiveDataTest, phonePortReceiveDataTest);
@@ -819,7 +819,7 @@ public class Streaming {
                                             byte localFrameId, short packetId, byte resendPacket){
 
             //short checkSumsLen = 256;
-            byte checkSum[] = {0, 0, 0, 0};
+            byte checkSum[];
             int packetOffset = packetId*packetsDataLength;
 
             // Initialize array
@@ -844,19 +844,22 @@ public class Streaming {
             txBuffer[14] = (byte)(currentPacketDataLen[0]>>8 & 0xff);
             txBuffer[15] = localFrameId;
             txBuffer[16] = imageType;    //Image type
+            //Faulty packets positions (is used when we resend the data)
+            txBuffer[17] = resendPacket;
             //CheckSum set to zero
-            txBuffer[17] = 0;
             txBuffer[18] = 0;
             txBuffer[19] = 0;
             txBuffer[20] = 0;
-            //Faulty packets positions (is used when we resend the data)
-            txBuffer[21] = resendPacket;
-
+            txBuffer[21] = 0;
+            txBuffer[22] = 0;
+            txBuffer[23] = 0;
+            txBuffer[24] = 0;
+            txBuffer[25] = 0;
             //Reserved for future data
-            txBuffer[22] = -1;
-            txBuffer[23] = -1;
-            txBuffer[24] = -1;
-            txBuffer[25] = -1;
+            txBuffer[26] = 0;
+            txBuffer[27] = 0;
+            txBuffer[28] = 0;
+            txBuffer[29] = 0;
 
 
             //Calculate checkSums
@@ -882,20 +885,20 @@ public class Streaming {
         }
 
         int i=0;
-        dataBuffer[checkSumPositions[i]+1] = 44;
-        dataBuffer[checkSumPositions[i]+2] = 44;
+        dataBuffer[checkSumPositions[i]+1] = (byte) (new Random()).nextInt(255);
+        dataBuffer[checkSumPositions[i]+2] = (byte) (new Random()).nextInt(255);
 
         i++;
-        dataBuffer[checkSumPositions[i]+1] = 44;
-        dataBuffer[checkSumPositions[i]+2] = 44;
+        dataBuffer[checkSumPositions[i]+1] = (byte) (new Random()).nextInt(255);
+        dataBuffer[checkSumPositions[i]+2] = (byte) (new Random()).nextInt(255);
 
         i++;
-        dataBuffer[checkSumPositions[i]+1] = 33;
-        dataBuffer[checkSumPositions[i]+2] = 12;
+        dataBuffer[checkSumPositions[i]+1] = (byte) (new Random()).nextInt(255);
+        dataBuffer[checkSumPositions[i]+2] = (byte) (new Random()).nextInt(255);
 
         i++;
-        dataBuffer[checkSumPositions[i]+1] = 65;
-        dataBuffer[checkSumPositions[i]+2] = 56;
+        dataBuffer[checkSumPositions[i]+1] = (byte) (new Random()).nextInt(255);
+        dataBuffer[checkSumPositions[i]+2] = (byte) (new Random()).nextInt(255);
     }
 
     // Split the datagramData into chkSumsNum equal of length pieces and calculate for each the checkSum
@@ -932,8 +935,8 @@ public class Streaming {
     public byte[] CalcCheckSumsPositions(byte[] datagramData,int[] positions, int currentPacketLength)
     {
         int chkSumsNum = positions.length-1;
-        int checkSumAdd[] = new int[chkSumsNum];
-        byte checkSumFinal[] = new byte[chkSumsNum];
+        int checkSumAdd[] = new int[2*chkSumsNum];
+        byte checkSumFinal[] = new byte[2*chkSumsNum];
 
         int checkSum = 0;
         for(int j=0;j<positions.length-1;j++) {
@@ -944,17 +947,20 @@ public class Streaming {
             if (endPos > currentPacketLength)  endPos = currentPacketLength;
 
             for (int byteI = startPos; byteI < endPos; byteI++) {
-                checkSum += Byte.toUnsignedInt(datagramData[byteI])+byteI&Byte.toUnsignedInt(datagramData[byteI]);
+                checkSum += (byteI|Byte.toUnsignedInt(datagramData[byteI]) + byteI)|Byte.toUnsignedInt(datagramData[byteI]);
             }
 
+            /*
             // Add all checksum bytes
             checkSumAdd[j] = (checkSum & 0xff) + (checkSum >> 8 & 0xff) + (checkSum >> 16 & 0xff) + (checkSum >> 24 & 0xff);
             while ((checkSumAdd[j] >> 8 & 0xff) != 0b00000000)
             {
                 checkSumAdd[j] = (checkSumAdd[j] & 0xff) + (checkSumAdd[j] >> 8 & 0xff);
             }
+            */
 
-            checkSumFinal[j] = (byte) (checkSumAdd[j] & 0xff);
+            checkSumFinal[2*j]   = (byte) (checkSum>>8 & 0xff);
+            checkSumFinal[2*j+1] = (byte) (checkSum & 0xff);
         }
 
         return checkSumFinal;
