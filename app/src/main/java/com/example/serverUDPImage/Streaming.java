@@ -188,7 +188,8 @@ public class Streaming {
                     }
 
                     //checkSums = CalcCheckSums(datagramData, NumOfChkSums, headerLen + packetDataSize);
-                    checkSums = CalcCheckSumsPositions(datagramData, checkSumPositions, headerLen + packetDataSize);
+                    checkSums = Fletcher16(datagramData, checkSumPositions, headerLen + packetDataSize);
+                    //checkSums = XOR_CheckSum(datagramData, checkSumPositions, headerLen + packetDataSize);
 
                     //Calculate Packet Error Rate And errors in packet, we divide the received packet into 'NumOfChkSums' number of chunks
                     PCount += NumOfChkSums;
@@ -756,8 +757,8 @@ public class Streaming {
                 constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
                         currentPacketDataLen, packetsNumber, localFrameId, packetId,defaultResendPacketCode);
 
-                //if(packetId < 10)
-                    SimulateError(txBuffer,10,5);
+                if(packetId < 1)
+                    SimulateError(txBuffer,100,5);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen[0], phoneIpReceiveDataTest, phonePortReceiveDataTest);
@@ -864,7 +865,8 @@ public class Streaming {
 
             //Calculate checkSums
             //checkSum = CalcCheckSums(txBuffer, NumOfChkSums, headerLen+currentPacketDataLen[0]);
-            checkSum = CalcCheckSumsPositions(txBuffer, checkSumPositions, headerLen+currentPacketDataLen[0]);
+            checkSum = Fletcher16(txBuffer, checkSumPositions, headerLen+currentPacketDataLen[0]);
+            //checkSum = XOR_CheckSum(txBuffer, checkSumPositions, headerLen+currentPacketDataLen[0]);
 
             //Store the checkSum into header
             for(int j=0;j<NumOfChkSums;j++) {
@@ -938,6 +940,7 @@ public class Streaming {
         int checkSumAdd[] = new int[2*chkSumsNum];
         byte checkSumFinal[] = new byte[2*chkSumsNum];
 
+
         int checkSum = 0;
         for(int j=0;j<positions.length-1;j++) {
             checkSum = 0;
@@ -961,6 +964,56 @@ public class Streaming {
 
             checkSumFinal[2*j]   = (byte) (checkSum>>8 & 0xff);
             checkSumFinal[2*j+1] = (byte) (checkSum & 0xff);
+
+        }
+
+        return checkSumFinal;
+    }
+
+    public byte[] Fletcher16(byte[] datagramData,int[] positions, int currentPacketLength)
+    {
+        int chkSumsNum = positions.length-1;
+        byte checkSumFinal[] = new byte[2*chkSumsNum];
+        int sum1 = 0;
+        int sum2 = 0;
+
+        for(int j=0;j<positions.length-1;j++) {
+            int startPos = positions[j];
+            int endPos = positions[j+1];
+
+            if (endPos > currentPacketLength)  endPos = currentPacketLength;
+
+            for (int byteI = startPos; byteI < endPos; byteI++) {
+                sum1 = (sum1 + datagramData[byteI]) ;
+                sum2 = (sum2 + sum1) ;
+            }
+
+            checkSumFinal[2*j]   = (byte) (sum1 & 0xff) ;
+            checkSumFinal[2*j+1] = (byte) (sum2 & 0xff);
+        }
+
+        return checkSumFinal;
+    }
+
+    public byte[] XOR_CheckSum(byte[] datagramData,int[] positions, int currentPacketLength)
+    {
+        int chkSumsNum = positions.length-1;
+        byte checkSumFinal[] = new byte[2*chkSumsNum];
+        int xor = 0;
+
+        for(int j=0;j<positions.length-1;j++) {
+            int startPos = positions[j];
+            int endPos = positions[j+1];
+
+            if (endPos > currentPacketLength)  endPos = currentPacketLength;
+
+            for (int byteI = startPos; byteI < endPos; byteI++) {
+                xor = (xor + datagramData[byteI]) & 0xFF;
+                xor = (((xor ^ 0xFF) + 1) & 0xFF);
+            }
+
+            checkSumFinal[2*j]   = (byte) (xor & 0xff) ;
+            checkSumFinal[2*j+1] = (byte) (xor & 0xff);
         }
 
         return checkSumFinal;
