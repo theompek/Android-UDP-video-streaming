@@ -203,24 +203,13 @@ public class Streaming {
                             pos[i] = (packetResend & (0b000000001 << i)) != 0;
                         }
 
-                        /*
-                        for(int i=0;i<pos.length;i++) {
-
-                            if(pos[i]){
-                                endPos = checkSumPositions[i+1]<packetsDataLength?(checkSumPositions[i+1]-checkSumPositions[i]):(packetsDataLength-checkSumPositions[i]);
-                                System.arraycopy(datagramData, checkSumPositions[counterPackets], tempData, checkSumPositions[i]-headerLen, endPos);
-                                counterPackets = i+1;
-                            }
-                        }
-                        */
-
                         for(int i=0;i<pos.length;i++) {
                             if (pos[i]) {
                                 prevStep = checkSumPositions[i] - checkSumPositions[0];
                                 startPosFrame = prevStep;
                                 startPosBuff = checkSumPositions[0] + overallLength;
                                 lengthData = checkSumPositions[i + 1] - checkSumPositions[i];
-                                lengthData = (i==pos.length-1)? (packetsDataLength - checkSumPositions[i]) + checkSumPositions[0] : lengthData;
+                                lengthData = overallLength + lengthData>packetDataSize? (packetDataSize - overallLength) : lengthData;
                                 System.arraycopy(datagramData, startPosBuff, tempData, startPosFrame, lengthData);
                                 overallLength += lengthData;
                             }
@@ -267,11 +256,13 @@ public class Streaming {
                         phoneSocket.send(dp);
 
                         int lengthData = 0;
+                        int overallLength = 0;
                         corruptedPacketLength = 0;
                         for(int i=0;i<pos.length;i++) {
                             if((errorPart & (0b000000001 << i)) != 0){
                                 lengthData = checkSumPositions[i + 1] - checkSumPositions[i];
-                                corruptedPacketLength += checkSumPositions[i + 1] - checkSumPositions[0] > packetsDataLength ? (packetsDataLength - checkSumPositions[i]) + checkSumPositions[0] : lengthData;
+                                corruptedPacketLength += overallLength + lengthData > packetDataSize ? (packetDataSize - overallLength) : lengthData;
+                                overallLength += lengthData;
                             }
                         }
                     }
@@ -821,7 +812,7 @@ public class Streaming {
                         currentPacketDataLen, packetsNumber, localFrameId, packetId,defaultResendPacketCode);
 
                 //if(packetId < 10)
-                    //SimulateError(txBuffer,100,1);
+                  //  SimulateError(txBuffer,100,1);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen[0], phoneIpReceiveDataTest, phonePortReceiveDataTest);
@@ -908,7 +899,7 @@ public class Streaming {
                         startPosFrame = packetOffset + prevStep;
                         startPosBuff = checkSumPositions[0] + overallLength;
                         lengthData = checkSumPositions[i + 1] - checkSumPositions[i];
-                        lengthData = checkSumPositions[i + 1] - checkSumPositions[0] > currentPacketDataLen[0] ? (currentPacketDataLen[0] - checkSumPositions[i]) + checkSumPositions[0] : lengthData;
+                        lengthData = overallLength +lengthData > currentPacketDataLen[0] ? (currentPacketDataLen[0] - overallLength) : lengthData;
                         System.arraycopy(frame, startPosFrame, txBuffer, startPosBuff, lengthData);
                         overallLength += lengthData;
                     }
@@ -979,7 +970,7 @@ public class Streaming {
             }
         }
 
-        int i=0;
+       /* int i=0;
         dataBuffer[checkSumPositions[i]+1] = (byte) (new Random()).nextInt(255);
         dataBuffer[checkSumPositions[i]+2] = (byte) (new Random()).nextInt(255);
 
@@ -993,7 +984,7 @@ public class Streaming {
 
         i++;
         dataBuffer[checkSumPositions[i]+1] = (byte) (new Random()).nextInt(255);
-        dataBuffer[checkSumPositions[i]+2] = (byte) (new Random()).nextInt(255);
+        dataBuffer[checkSumPositions[i]+2] = (byte) (new Random()).nextInt(255);*/
     }
 
     // Split the datagramData into chkSumsNum equal of length pieces and calculate for each the checkSum
