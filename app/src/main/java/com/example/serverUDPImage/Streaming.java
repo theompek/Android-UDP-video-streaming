@@ -187,6 +187,53 @@ public class Streaming {
                         datagramData[headerLen-NumOfChkSums-reservedBytesNum +i] = 0;
                     }
 
+                    restoreCorruptedPacket = false;
+                    //If we get a resend packet then we need to put the data in correct position
+                    if(packetResend!=defaultResendPacketCode){
+                        byte[] tempData = new byte[datagramPacketLength];
+                        System.arraycopy(FramesBuffer[localFrameId].buffer,packetId * packetsDataLength,tempData, 0,packetsDataLength);
+                        //System.arraycopy(datagramData, 0, tempData, 0, headerLen);
+                        int prevStep = 0;
+                        int startPosFrame = 0;
+                        int startPosBuff = 0;
+                        int lengthData = 0;
+                        int overallLength = 0;
+
+                        for(int i=0;i<pos.length;i++) {
+                            pos[i] = (packetResend & (0b000000001 << i)) != 0;
+                        }
+
+                        /*
+                        for(int i=0;i<pos.length;i++) {
+
+                            if(pos[i]){
+                                endPos = checkSumPositions[i+1]<packetsDataLength?(checkSumPositions[i+1]-checkSumPositions[i]):(packetsDataLength-checkSumPositions[i]);
+                                System.arraycopy(datagramData, checkSumPositions[counterPackets], tempData, checkSumPositions[i]-headerLen, endPos);
+                                counterPackets = i+1;
+                            }
+                        }
+                        */
+
+                        for(int i=0;i<pos.length;i++) {
+                            if (pos[i]) {
+                                prevStep = checkSumPositions[i] - checkSumPositions[0];
+                                startPosFrame = prevStep;
+                                startPosBuff = checkSumPositions[0] + overallLength;
+                                lengthData = checkSumPositions[i + 1] - checkSumPositions[i];
+                                lengthData = (i==pos.length-1)? (packetsDataLength - checkSumPositions[i]) + checkSumPositions[0] : lengthData;
+                                System.arraycopy(datagramData, startPosBuff, tempData, startPosFrame, lengthData);
+                                overallLength += lengthData;
+                            }
+                        }
+
+
+                        System.arraycopy(tempData, 0, currentPacketData, 0, packetsDataLength);
+                        restoreCorruptedPacket = true;
+
+                        int d = tempData.length;
+                        //continue;
+                    }
+
                     //checkSums = CalcCheckSums(datagramData, NumOfChkSums, headerLen + packetDataSize);
                     checkSums = Fletcher16(datagramData, checkSumPositions, headerLen + packetDataSize);
                     //checkSums = XOR_CheckSum(datagramData, checkSumPositions, headerLen + packetDataSize);
@@ -218,14 +265,30 @@ public class Streaming {
 
                         DatagramPacket dp = new DatagramPacket(ACKPacketBf, ACKPacketBf.length, phoneDpReceive.getAddress(), phoneDpReceive.getPort());
                         phoneSocket.send(dp);
+
+                        int lengthData = 0;
+                        corruptedPacketLength = 0;
+                        for(int i=0;i<pos.length;i++) {
+                            if((errorPart & (0b000000001 << i)) != 0){
+                                lengthData = checkSumPositions[i + 1] - checkSumPositions[i];
+                                corruptedPacketLength += checkSumPositions[i + 1] - checkSumPositions[0] > packetsDataLength ? (packetsDataLength - checkSumPositions[i]) + checkSumPositions[0] : lengthData;
+                            }
+                        }
                     }
 
-                    if(packetIsCorrupted){
-                        continue;
+                    KbpsSucceed += packetDataSize + headerLen - corruptedPacketLength;
+
+                    /*
+                    if(packetDataSize < customMsgFromServerNum){
+                        String msgFromServer = new String( Arrays.copyOfRange(datagramData, headerLen, headerLen+packetDataSize), Charset.forName("UTF-8"));
+                        if(respTimeMsg.equals(msgFromServer)){
+                            DatagramPacket dp = new DatagramPacket(ACKPacketBf, ACKPacketBf.length, phoneDpReceive.getAddress(), phoneDpReceive.getPort());
+                            phoneSocket.send(dp);
+
+                            continue;
+                        }
                     }
-                    else{
-                        KbpsSucceed += packetDataSize + headerLen;
-                    }
+                    */
 
                     if(checkRequestForResponseTime()) continue;
 
@@ -254,7 +317,7 @@ public class Streaming {
 
 
                     //FramesBuffer[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
-                    FramesBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId);
+                    FramesBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId, corruptedPacketLength, restoreCorruptedPacket);
 
                     if (FramesBuffer[localFrameId].frameIsFilled()) {
                         lastCompletedFrameInQueue = frameId;
@@ -497,12 +560,15 @@ public class Streaming {
             return 0;
         }
 
-        public byte  addDataToBuffer(byte[] packetData, int packetLength, int packetId) {
+        public byte  addDataToBuffer(byte[] packetData, int packetLength, int packetId, int corruptedDataLength, boolean restoreCorruptedPacket) {
             if (packetId * packetsDataLength + packetLength > maxObjectLength /*|| packetLength != packetsDataLength*/)
                 return 0;
-            System.arraycopy(packetData, 0, buffer, packetId * packetsDataLength, packetLength);
-            objLength += packetLength;
-            packetsNumberCounter++;
+
+            System.arraycopy(packetData, 0, buffer, packetId * packetsDataLength, restoreCorruptedPacket?packetsDataLength:packetLength);
+            objLength += packetLength - corruptedDataLength;
+
+            if(corruptedDataLength==0)
+                packetsNumberCounter++;
             return 1;
         }
 
@@ -573,9 +639,6 @@ public class Streaming {
         File root = Environment.getExternalStorageDirectory();
         */
 
-        int maxImageSize = 200000;
-        byte[][] imageAll = new byte[2][maxImageSize];
-        byte packetType;
         static final byte imageType = 0;
         static final byte audioType = 1;
         ImageView imageView;
@@ -614,7 +677,7 @@ public class Streaming {
                             byte localFrameId = 0;
                             long prevTime = 0;
 
-                            responseTimeServer = getResponseTime();
+                            //responseTimeServer = getResponseTime();
                             //notificationMsgWaitTime = responseTimeServer +1;
                             try {
                                 // Set socket timeout, how much to wait for notification messages
@@ -757,8 +820,8 @@ public class Streaming {
                 constructDataIntoBuffer(frame, txBuffer, frameId, frameSize,
                         currentPacketDataLen, packetsNumber, localFrameId, packetId,defaultResendPacketCode);
 
-                if(packetId < 1)
-                    SimulateError(txBuffer,100,5);
+                //if(packetId < 10)
+                    //SimulateError(txBuffer,100,1);
 
                 //DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketLen, phoneIpReceiveDataTest, phonePortReceiveDataTest);
                 DatagramPacket dp = new DatagramPacket(txBuffer, headerLen+currentPacketDataLen[0], phoneIpReceiveDataTest, phonePortReceiveDataTest);
@@ -825,8 +888,38 @@ public class Streaming {
 
             // Initialize array
             Arrays.fill(txBuffer, (byte) 0);
-            //Copy the piece of frame into txBuffer
-            System.arraycopy( frame, packetOffset, txBuffer, headerLen, currentPacketDataLen[0]);
+
+            //Check the resend packet code and adjust the data needed to be resend accordingly
+            if(resendPacket!=defaultResendPacketCode ){
+                boolean[] pos = {false, false, false, false};
+                int startPosFrame = 0;
+                int startPosBuff = 0;
+                int lengthData = 0;
+                int prevStep = 0;
+                int overallLength = 0;
+
+                for(int i=0;i<pos.length;i++) {
+                    pos[i] = (resendPacket & (0b000000001 << i)) != 0;
+                }
+
+                for(int i=0;i<pos.length;i++) {
+                    if (pos[i]) {
+                        prevStep = checkSumPositions[i] - checkSumPositions[0];
+                        startPosFrame = packetOffset + prevStep;
+                        startPosBuff = checkSumPositions[0] + overallLength;
+                        lengthData = checkSumPositions[i + 1] - checkSumPositions[i];
+                        lengthData = checkSumPositions[i + 1] - checkSumPositions[0] > currentPacketDataLen[0] ? (currentPacketDataLen[0] - checkSumPositions[i]) + checkSumPositions[0] : lengthData;
+                        System.arraycopy(frame, startPosFrame, txBuffer, startPosBuff, lengthData);
+                        overallLength += lengthData;
+                    }
+                }
+
+                currentPacketDataLen[0] = (short)overallLength;
+            }
+            else{
+                //Copy the piece of frame into txBuffer
+                System.arraycopy( frame, packetOffset, txBuffer, headerLen, currentPacketDataLen[0]);
+            }
 
             //Header construction
             txBuffer[1] = (byte)(frameId & 0xff);
