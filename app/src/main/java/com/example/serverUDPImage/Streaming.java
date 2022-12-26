@@ -38,7 +38,7 @@ public class Streaming {
     int NumOfChkSums = 8;
     int confirmationMessageLen = 8;
     String respTimeMsg = "RESPONSE_TIME_REQUEST";
-    int customMsgFromServerNum = 101;
+    int customMsgFromServerLen = 101;
     int[] checkSumPositions = {headerLen,256,512,768,packetsDataLength+headerLen};
     byte defaultResendPacketCode = (byte) 0b11111111;
 
@@ -270,7 +270,7 @@ public class Streaming {
                     KbpsSucceed += packetDataSize + headerLen - corruptedPacketLength;
 
                     /*
-                    if(packetDataSize < customMsgFromServerNum){
+                    if(packetDataSize < customMsgFromServerLen){
                         String msgFromServer = new String( Arrays.copyOfRange(datagramData, headerLen, headerLen+packetDataSize), Charset.forName("UTF-8"));
                         if(respTimeMsg.equals(msgFromServer)){
                             DatagramPacket dp = new DatagramPacket(ACKPacketBf, ACKPacketBf.length, phoneDpReceive.getAddress(), phoneDpReceive.getPort());
@@ -388,7 +388,7 @@ public class Streaming {
         }
 
         public boolean checkRequestForResponseTime(){
-            if(packetDataSize < customMsgFromServerNum) {
+            if(packetDataSize < customMsgFromServerLen) {
                 int prevTimeOut=1;
                 int maxRespTime = 100;
                 byte[] msg= respTimeMsg.getBytes(StandardCharsets.UTF_8);
@@ -430,7 +430,6 @@ public class Streaming {
             }
             return false;
         }
-
 
         @SuppressLint("SetTextI18n")
         public void displayStatistics(Activity mainActivity){
@@ -878,7 +877,7 @@ public class Streaming {
             int packetOffset = packetId*packetsDataLength;
 
             // Initialize array
-            Arrays.fill(txBuffer, (byte) 0);
+            //Arrays.fill(txBuffer, (byte) 0);
 
             //Check the resend packet code and adjust the data needed to be resend accordingly
             if(resendPacket!=defaultResendPacketCode ){

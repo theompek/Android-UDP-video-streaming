@@ -24,9 +24,9 @@ import java.util.ArrayList;
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
 
     Streaming.CommunicationReceiveThread communicationReceiveThread;
-    Streaming.TestSendDataCommunicationThread communicationSendThread;
+    //Streaming.TestSendDataCommunicationThread communicationSendThread;
     Thread communicationReceiveThreadHandler = null;
-    Thread communicationSendThreadHandler = null;
+    //Thread communicationSendThreadHandler = null;
     private LinearLayout msgList;
     private int greenColor;
     private EditText edMessage;
@@ -72,7 +72,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         listViewObjects.add(findViewById(R.id.textViewKbpsSucceed));
         communicationReceiveThread = (new Streaming()).new CommunicationReceiveThread(this, listViewObjects);
 
-        communicationSendThread = (new Streaming()).new TestSendDataCommunicationThread(findViewById(R.id.imageView), localIPAddress, this);
+        //communicationSendThread = (new Streaming()).new TestSendDataCommunicationThread(findViewById(R.id.imageView), localIPAddress, this);
     }
 
     @Override
@@ -82,9 +82,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             //msgList.removeAllViews();
             //Helpers.showMessage("Server Started.", Color.BLACK,msgList, this);
             this.communicationReceiveThreadHandler = new Thread(communicationReceiveThread);
-            this.communicationSendThreadHandler = new Thread(communicationSendThread);
+            //this.communicationSendThreadHandler = new Thread(communicationSendThread);
             this.communicationReceiveThreadHandler.start();
-            this.communicationSendThreadHandler.start();
+            //this.communicationSendThreadHandler.start();
             return;
         }
 
