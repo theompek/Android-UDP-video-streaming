@@ -5,7 +5,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.os.Environment;
 import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
@@ -15,8 +14,6 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -333,23 +330,7 @@ public class Streaming {
                         // Add an error inside the buffer
 
                         if (imgObj != null) {
-
-                            File photo = new File(Environment.getExternalStorageDirectory(),
-                                    "photo.jpeg");
-
-                            if (photo.exists()) {
-                                photo.delete();
-                            }
-
                             try {
-                                FileOutputStream fos = new FileOutputStream(photo.getPath());
-
-                                /*
-                                fos.write(Arrays.copyOfRange(imgObj.buffer, 0, imgObj.frameSize));
-                                String s = String.valueOf(fos.getChannel().size());
-                                fos.close();
-                                */
-                                //SimulateError(imgObj.buffer,90,1);
 
                                 Bitmap bitmap = BitmapFactory.decodeByteArray(imgObj.buffer, 0, imgObj.frameSize);
                                 Log.d("Myti", "frameSize " + frameSize);
@@ -370,8 +351,8 @@ public class Streaming {
                                 }
 
                                 timePrevFrame = System.currentTimeMillis();
-                            } catch (IOException e) {
-                                Log.e("Myti", "Exception in photoCallback", e);
+                            } catch (Exception e) {
+                                Log.e("Myti", "Exception in try to display image in view", e);
                             }
                         }
                     }
