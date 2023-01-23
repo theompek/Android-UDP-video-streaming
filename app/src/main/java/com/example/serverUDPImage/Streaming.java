@@ -99,9 +99,9 @@ public class Streaming {
 
         //Resend data parts positions
         boolean[] pos = {false, false, false, false};
-        //boolean pos5=false;
-        //boolean pos6=false;
 
+        //The thread that display the images with a static rate (stable fps)
+        Thread displayImagesThread;
 
         //-------------------------------------------CLIENT----------------------------------------
         public CommunicationReceiveThread(Activity mainActivity, ArrayList<View> listViewObjects){
@@ -125,7 +125,7 @@ public class Streaming {
 
         }
 
-        public int findDelimiter(byte[] data, byte[] delimiter) {
+        /*public int findDelimiter(byte[] data, byte[] delimiter) {
             int i = headerLen;
             int j = 0;
             while (i < (data.length-delimiter.length)) {
@@ -137,16 +137,37 @@ public class Streaming {
                 i++;
             }
             return -1;
-        }
+        }*/
 
         @SuppressLint("SetTextI18n")
         public void run() {
-            while (!Thread.currentThread().isInterrupted()) {
-                if (this.imageView != null) {
-                    //continue;
-                }
+            //Start the images thread responsible to display the images in a specific rate of frames
+            displayImagesThread = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    long prevTime=System.currentTimeMillis();
+                    long timeInterval=20;    //msec
+                    long waiTime=0;    //msec
 
-                Log.d("Myti", "Get data");
+                    //Idea: We can create a pid controller here to control the fps so to be stable
+                    //We measure the queue size and the fps and we try to keep the fps in a stable number
+                    //regarding with the size changes of the queue
+                    while (!Thread.currentThread().isInterrupted()) {
+                        try {
+                            displayImages();
+                            waiTime = timeInterval - (System.currentTimeMillis()-prevTime);
+                            if(waiTime>0) Thread.sleep(waiTime);
+                            prevTime = System.currentTimeMillis();
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            });
+            displayImagesThread.start();
+
+            while (!Thread.currentThread().isInterrupted()) {
+
                 try {
                     // Initialize array
                     //Arrays.fill(datagramData, (byte) 0);
@@ -169,102 +190,120 @@ public class Streaming {
                     packetType = Integer.bitCount(header[16]) > 3 ? audioType : imageType;
                     packetResend = (byte)(header[17] & 0xff);
 
-                    displayStatistics(mainActivity);
-                    displayStat_bo = false; // We can not display statistics if we are in the middle of a frame
+                    if (packetType == imageType){
+                        storeImages();
+                    }else{
+                        continue;
+                    }
 
-                    currentFrameIsBroken = false;
+
+                } catch (IOException e) {
+                    Log.d("Myti", "Exception server");
+                    e.printStackTrace();
+                }
+
+            }
+        }
+
+
+        public void storeImages(){
+            try {
+                displayStatistics(mainActivity);
+                displayStat_bo = false; // We can not display statistics if we are in the middle of a frame
+
+                currentFrameIsBroken = false;
+                corruptedPacketLength = 0;
+
+                //Check the CheckSum to insure the integrity of the data
+                for (int i = 0; i < NumOfChkSums; i++) {
+                    //Get received checkSums
+                    receivedCheckSum[i] = datagramData[headerLen - NumOfChkSums - reservedBytesNum + i];
+
+                    //Set to zero the checkSum fields and calculate the checksum of the current packet
+                    datagramData[headerLen - NumOfChkSums - reservedBytesNum + i] = 0;
+                }
+
+                restoreCorruptedPacket = false;
+                //If we get a resend packet then we need to put the data in correct position
+                if (packetResend != defaultResendPacketCode) {
+                    byte[] tempData = new byte[datagramPacketLength];
+                    System.arraycopy(FramesBuffer[localFrameId].buffer, packetId * packetsDataLength, tempData, 0, packetsDataLength);
+                    //System.arraycopy(datagramData, 0, tempData, 0, headerLen);
+                    int prevStep = 0;
+                    int startPosFrame = 0;
+                    int startPosBuff = 0;
+                    int lengthData = 0;
+                    int overallLength = 0;
+
+                    for (int i = 0; i < pos.length; i++) {
+                        pos[i] = (packetResend & (0b000000001 << i)) != 0;
+                    }
+
+                    for (int i = 0; i < pos.length; i++) {
+                        if (pos[i]) {
+                            prevStep = checkSumPositions[i] - checkSumPositions[0];
+                            startPosFrame = prevStep;
+                            startPosBuff = checkSumPositions[0] + overallLength;
+                            lengthData = checkSumPositions[i + 1] - checkSumPositions[i];
+                            lengthData = overallLength + lengthData > packetDataSize ? (packetDataSize - overallLength) : lengthData;
+                            System.arraycopy(datagramData, startPosBuff, tempData, startPosFrame, lengthData);
+                            overallLength += lengthData;
+                        }
+                    }
+
+
+                    System.arraycopy(tempData, 0, currentPacketData, 0, packetsDataLength);
+                    restoreCorruptedPacket = true;
+
+                    int d = tempData.length;
+                    //continue;
+                }
+
+                //checkSums = CalcCheckSums(datagramData, NumOfChkSums, headerLen + packetDataSize);
+                checkSums = Fletcher16(datagramData, checkSumPositions, headerLen + packetDataSize);
+                //checkSums = XOR_CheckSum(datagramData, checkSumPositions, headerLen + packetDataSize);
+
+                //Calculate Packet Error Rate And errors in packet, we divide the received packet into 'NumOfChkSums' number of chunks
+                PCount += NumOfChkSums;
+                Kbps += packetDataSize + headerLen;
+                errorPart = 0;
+                for (int i = 0; i < NumOfChkSums / 2; i++) {
+                    if (checkSums[2 * i] != receivedCheckSum[2 * i] || checkSums[2 * i + 1] != receivedCheckSum[2 * i + 1]) {
+                        PErrors++;
+                        currentFrameIsBroken = true;
+                        errorPart = (byte) (errorPart | (1 << i));
+                    }
+                }
+
+                //if (checkSums[0] != receivedCheckSum[0]) packetIsCorrupted=true;
+                if (currentFrameIsBroken) packetIsCorrupted = true;
+
+                if (packetIsCorrupted) {
+                    //Send message back to the server (esp32 board)
+                    ACKPacketBf[0] = header[10];    //packetId
+                    ACKPacketBf[1] = header[1];     //frameId1
+                    ACKPacketBf[2] = header[2];     //frameId2
+                    ACKPacketBf[3] = header[3];     //frameId3
+                    ACKPacketBf[4] = header[4];     //frameId4
+                    ACKPacketBf[5] = header[15];    //localFrameId
+                    ACKPacketBf[6] = errorPart;     //CheckSum part with error
+
+                    DatagramPacket dp = new DatagramPacket(ACKPacketBf, ACKPacketBf.length, phoneDpReceive.getAddress(), phoneDpReceive.getPort());
+                    phoneSocket.send(dp);
+
+                    int lengthData = 0;
+                    int overallLength = 0;
                     corruptedPacketLength = 0;
-
-                    //Check the CheckSum to insure the integrity of the data
-                    for (int i=0;i<NumOfChkSums;i++) {
-                        //Get received checkSums
-                        receivedCheckSum[i] = datagramData[headerLen-NumOfChkSums- reservedBytesNum +i];
-
-                        //Set to zero the checkSum fields and calculate the checksum of the current packet
-                        datagramData[headerLen-NumOfChkSums-reservedBytesNum +i] = 0;
-                    }
-
-                    restoreCorruptedPacket = false;
-                    //If we get a resend packet then we need to put the data in correct position
-                    if(packetResend!=defaultResendPacketCode){
-                        byte[] tempData = new byte[datagramPacketLength];
-                        System.arraycopy(FramesBuffer[localFrameId].buffer,packetId * packetsDataLength,tempData, 0,packetsDataLength);
-                        //System.arraycopy(datagramData, 0, tempData, 0, headerLen);
-                        int prevStep = 0;
-                        int startPosFrame = 0;
-                        int startPosBuff = 0;
-                        int lengthData = 0;
-                        int overallLength = 0;
-
-                        for(int i=0;i<pos.length;i++) {
-                            pos[i] = (packetResend & (0b000000001 << i)) != 0;
-                        }
-
-                        for(int i=0;i<pos.length;i++) {
-                            if (pos[i]) {
-                                prevStep = checkSumPositions[i] - checkSumPositions[0];
-                                startPosFrame = prevStep;
-                                startPosBuff = checkSumPositions[0] + overallLength;
-                                lengthData = checkSumPositions[i + 1] - checkSumPositions[i];
-                                lengthData = overallLength + lengthData>packetDataSize? (packetDataSize - overallLength) : lengthData;
-                                System.arraycopy(datagramData, startPosBuff, tempData, startPosFrame, lengthData);
-                                overallLength += lengthData;
-                            }
-                        }
-
-
-                        System.arraycopy(tempData, 0, currentPacketData, 0, packetsDataLength);
-                        restoreCorruptedPacket = true;
-
-                        int d = tempData.length;
-                        //continue;
-                    }
-
-                    //checkSums = CalcCheckSums(datagramData, NumOfChkSums, headerLen + packetDataSize);
-                    checkSums = Fletcher16(datagramData, checkSumPositions, headerLen + packetDataSize);
-                    //checkSums = XOR_CheckSum(datagramData, checkSumPositions, headerLen + packetDataSize);
-
-                    //Calculate Packet Error Rate And errors in packet, we divide the received packet into 'NumOfChkSums' number of chunks
-                    PCount += NumOfChkSums;
-                    Kbps += packetDataSize + headerLen;
-                    errorPart = 0;
-                    for (int i=0;i<NumOfChkSums/2;i++) {
-                        if (checkSums[2*i] != receivedCheckSum[2*i] || checkSums[2*i+1] != receivedCheckSum[2*i+1]){
-                            PErrors++;
-                            currentFrameIsBroken= true;
-                            errorPart = (byte) (errorPart | (1<<i));
+                    for (int i = 0; i < pos.length; i++) {
+                        if ((errorPart & (0b000000001 << i)) != 0) {
+                            lengthData = checkSumPositions[i + 1] - checkSumPositions[i];
+                            corruptedPacketLength += overallLength + lengthData > packetDataSize ? (packetDataSize - overallLength) : lengthData;
+                            overallLength += lengthData;
                         }
                     }
+                }
 
-                    //if (checkSums[0] != receivedCheckSum[0]) packetIsCorrupted=true;
-                    if (currentFrameIsBroken) packetIsCorrupted =true;
-
-                    if(packetIsCorrupted) {
-                        //Send message back to the server (esp32 board)
-                        ACKPacketBf[0] = header[10];    //packetId
-                        ACKPacketBf[1] = header[1];     //frameId1
-                        ACKPacketBf[2] = header[2];     //frameId2
-                        ACKPacketBf[3] = header[3];     //frameId3
-                        ACKPacketBf[4] = header[4];     //frameId4
-                        ACKPacketBf[5] = header[15];    //localFrameId
-                        ACKPacketBf[6] = errorPart;     //CheckSum part with error
-
-                        DatagramPacket dp = new DatagramPacket(ACKPacketBf, ACKPacketBf.length, phoneDpReceive.getAddress(), phoneDpReceive.getPort());
-                        phoneSocket.send(dp);
-
-                        int lengthData = 0;
-                        int overallLength = 0;
-                        corruptedPacketLength = 0;
-                        for(int i=0;i<pos.length;i++) {
-                            if((errorPart & (0b000000001 << i)) != 0){
-                                lengthData = checkSumPositions[i + 1] - checkSumPositions[i];
-                                corruptedPacketLength += overallLength + lengthData > packetDataSize ? (packetDataSize - overallLength) : lengthData;
-                                overallLength += lengthData;
-                            }
-                        }
-                    }
-
-                    KbpsSucceed += packetDataSize + headerLen - corruptedPacketLength;
+                KbpsSucceed += packetDataSize + headerLen - corruptedPacketLength;
 
                     /*
                     if(packetDataSize < customMsgFromServerLen){
@@ -278,93 +317,86 @@ public class Streaming {
                     }
                     */
 
-                    if(checkRequestForResponseTime()) continue;
+                if (checkRequestForResponseTime()) return;
 
-                    if (localFrameId >= maxImagesStored || localFrameId < 0) {
-                        //The other values from the header can be used so as the frame be restored, for example we
-                        //can compare the values frameId or packetId or frameSize with the values of the store frameObject and find
-                        //the right location of the packet, for the moment we just skip this step and we implement this in the future
-                        continue;
-                    }
-
-                    //If the current received packet is from an old frame and we have in the queue
-                    //a newer completed frame then we can skip this packet because we have already show
-                    //a newer one frame
-                    if (frameId < lastCompletedFrameInQueue) continue;
-
-                    //If the localFrameId is corrupted or the header is from other frame then skip
-                    if (FramesBuffer[localFrameId].compareHeaders(frameId, frameSize, packetsNumber, localFrameId) != 0) {
-                        //FramesBuffer[localFrameId].initiateFrame(); //Broken Frame
-                        continue;
-                    }
-
-                    if(!restoreCorruptedPacket){
-
-                        System.arraycopy(datagramData, headerLen, currentPacketData, 0, packetDataSize);
-                    }
-
-
-                    //FramesBuffer[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
-                    FramesBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId, corruptedPacketLength, restoreCorruptedPacket);
-
-                    if (FramesBuffer[localFrameId].frameIsFilled()) {
-                        lastCompletedFrameInQueue = frameId;
-                        imagesQueue.add(FramesBuffer[localFrameId].clone());
-                        //Clear the frames buffer which are between 2 consecutive completed frames
-                        if (localFrameId >= prevLocalFrameId) {
-                            for (int i = prevLocalFrameId; i <= localFrameId; i++)
-                                FramesBuffer[i].initiateFrame();
-                        } else {
-                            for (int i = prevLocalFrameId; i < maxImagesStored; i++)
-                                FramesBuffer[i].initiateFrame();
-
-                            for (int i = 0; i < localFrameId; i++)
-                                FramesBuffer[i].initiateFrame();
-                        }
-                        prevLocalFrameId = localFrameId;
-
-
-                        //System.arraycopy( currentPacketData, 0, imagesObj[localFrameId].buffer, destPos, currentPacketLength);
-                        //Save photo
-                        FrameReceivedObject imgObj = imagesQueue.poll();
-                        // Add an error inside the buffer
-
-                        if (imgObj != null) {
-                            try {
-
-                                Bitmap bitmap = BitmapFactory.decodeByteArray(imgObj.buffer, 0, imgObj.frameSize);
-                                Log.d("Myti", "frameSize " + frameSize);
-                                if (bitmap != null) {
-                                    mainActivity.runOnUiThread(new Runnable() {
-
-                                        @Override
-                                        public void run() {
-
-                                            // Stuff that updates the UI
-                                            imageView.setImageBitmap(bitmap);
-                                        }
-                                    });
-
-                                    timePerFrameSum += (int) 1000/(System.currentTimeMillis()-timePrevFrame);
-                                    framesCount++;
-                                    displayStat_bo = true;
-                                }
-
-                                timePrevFrame = System.currentTimeMillis();
-                            } catch (Exception e) {
-                                Log.e("Myti", "Exception in try to display image in view", e);
-                            }
-                        }
-                    }
-
-                    //esp32Ip = phoneDpReceive.getAddress();
-                    //esp32Port = phoneDpReceive.getPort();
-
-                } catch (IOException e) {
-                    Log.d("Myti", "Exception server");
-                    e.printStackTrace();
+                if (localFrameId >= maxImagesStored || localFrameId < 0) {
+                    //The other values from the header can be used so as the frame be restored, for example we
+                    //can compare the values frameId or packetId or frameSize with the values of the store frameObject and find
+                    //the right location of the packet, for the moment we just skip this step and we implement this in the future
+                    return;
                 }
 
+                //If the current received packet is from an old frame and we have in the queue
+                //a newer completed frame then we can skip this packet because we have already show
+                //a newer one frame
+                if (frameId < lastCompletedFrameInQueue) return;
+
+                //If the localFrameId is corrupted or the header is from other frame then skip
+                if (FramesBuffer[localFrameId].compareHeaders(frameId, frameSize, packetsNumber, localFrameId) != 0) {
+                    //FramesBuffer[localFrameId].initiateFrame(); //Broken Frame
+                    return;
+                }
+
+                if (!restoreCorruptedPacket) {
+
+                    System.arraycopy(datagramData, headerLen, currentPacketData, 0, packetDataSize);
+                }
+
+
+                //FramesBuffer[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
+                FramesBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId, corruptedPacketLength, restoreCorruptedPacket);
+
+                //If the frame was completed then add it into a FIFO queue
+                if (FramesBuffer[localFrameId].frameIsFilled()) {
+                    lastCompletedFrameInQueue = localFrameId;
+                    imagesQueue.add(FramesBuffer[localFrameId].clone());
+
+                    //Clear the frames (not the the Queue) buffer which are between 2 consecutive completed frames
+                    if (localFrameId >= prevLocalFrameId) {
+                        for (int i = prevLocalFrameId; i <= localFrameId; i++)
+                            FramesBuffer[i].initiateFrame();
+                    } else {
+                        for (int i = prevLocalFrameId; i < maxImagesStored; i++)
+                            FramesBuffer[i].initiateFrame();
+
+                        for (int i = 0; i < localFrameId; i++)
+                            FramesBuffer[i].initiateFrame();
+                    }
+                    prevLocalFrameId = localFrameId;
+                }
+                //esp32Ip = phoneDpReceive.getAddress();
+                //esp32Port = phoneDpReceive.getPort();
+            }catch (IOException e) {
+                e.printStackTrace();
+            }
+
+        }
+
+        public void displayImages(){
+            FrameReceivedObject imgObj = imagesQueue.poll();
+            Log.d("Myti", "Queue images size: " + imagesQueue.size());
+            if (imgObj != null) {
+                try {
+                    Bitmap bitmap = BitmapFactory.decodeByteArray(imgObj.buffer, 0, imgObj.frameSize);
+                    Log.d("Myti", "frameSize " + frameSize);
+                    if (bitmap != null) {
+                        mainActivity.runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                // Stuff that updates the UI
+                                imageView.setImageBitmap(bitmap);
+                            }
+                        });
+
+                        timePerFrameSum += (int) 1000 / (System.currentTimeMillis() - timePrevFrame);
+                        framesCount++;
+                        displayStat_bo = true;
+                    }
+
+                    timePrevFrame = System.currentTimeMillis();
+                } catch (Exception e) {
+                    Log.e("Myti", "Exception in try to display image in view", e);
+                }
             }
         }
 
