@@ -103,6 +103,9 @@ public class Streaming {
         //The thread that display the images with a static rate (stable fps)
         Thread displayImagesThread;
 
+        //Audio
+        ADPCME_Codec coder_ADPCME = new ADPCME_Codec();
+
         //-------------------------------------------CLIENT----------------------------------------
         public CommunicationReceiveThread(Activity mainActivity, ArrayList<View> listViewObjects){
             try {
@@ -141,29 +144,9 @@ public class Streaming {
 
         @SuppressLint("SetTextI18n")
         public void run() {
-            //Start the images thread responsible to display the images in a specific rate of frames
-            displayImagesThread = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    long prevTime=System.currentTimeMillis();
-                    long timeInterval=20;    //msec
-                    long waiTime=0;    //msec
 
-                    //Idea: We can create a pid controller here to control the fps so to be stable
-                    //We measure the queue size and the fps and we try to keep the fps in a stable number
-                    //regarding with the size changes of the queue
-                    while (!Thread.currentThread().isInterrupted()) {
-                        try {
-                            displayImages();
-                            waiTime = timeInterval - (System.currentTimeMillis()-prevTime);
-                            if(waiTime>0) Thread.sleep(waiTime);
-                            prevTime = System.currentTimeMillis();
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
-                    }
-                }
-            });
+            //Start the images thread responsible to display the images in a specific rate of frames
+            displayImagesThread = createImagesThread();
             displayImagesThread.start();
 
             while (!Thread.currentThread().isInterrupted()) {
@@ -196,7 +179,6 @@ public class Streaming {
                         continue;
                     }
 
-
                 } catch (IOException e) {
                     Log.d("Myti", "Exception server");
                     e.printStackTrace();
@@ -205,6 +187,35 @@ public class Streaming {
             }
         }
 
+        public Thread createImagesThread()
+        {
+            return new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    long prevTime=System.currentTimeMillis();
+                    long timeInterval=20;    //msec
+                    long waiTime=0;    //msec
+
+                    //Idea: We can create a pid controller here to control the fps so to be stable
+                    //We measure the queue size and the fps and we try to keep the fps in a stable number
+                    //regarding with the size changes of the queue
+                    while (!Thread.currentThread().isInterrupted()) {
+                        try {
+                            displayImages();
+                            waiTime = timeInterval - (System.currentTimeMillis()-prevTime);
+                            if(waiTime>0) Thread.sleep(waiTime);
+                            prevTime = System.currentTimeMillis();
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            });
+        }
+
+        public void storeAudio(){
+
+        }
 
         public void storeImages(){
             try {
