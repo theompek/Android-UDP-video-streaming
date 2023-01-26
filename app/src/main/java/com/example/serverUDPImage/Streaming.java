@@ -5,6 +5,9 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.media.AudioFormat;
+import android.media.AudioManager;
+import android.media.AudioTrack;
 import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
@@ -30,6 +33,11 @@ public class Streaming {
     int packetsDataLength = 920;
     int datagramPacketLength = 1024;
     int maxImagesStored = 100;
+    int imagesBufferSize = 40000;   //40kbs per image
+    int maxAudioStored  =   50;
+    int audioBufferSize = 4000; //4kbs pes audio
+    AudioTrack track = null;
+    int sampleRate = 21000; //21khz
     byte headerLen = 30;
     int reservedBytesNum = 4;
     int NumOfChkSums = 8;
@@ -46,11 +54,17 @@ public class Streaming {
         private byte[] buf = new byte[datagramPacketLength];
         private DatagramPacket phoneDpReceive = new DatagramPacket(buf, buf.length);
 
+        //Images Queue
         Queue<FrameReceivedObject> imagesQueue = new LinkedList<>();
         int lastCompletedFrameInQueue = -1;
-        FrameReceivedObject[] FramesBuffer = new FrameReceivedObject[maxImagesStored];
+        FrameReceivedObject[] FramesImagesBuffer = new FrameReceivedObject[maxImagesStored];
 
-        byte[] currentPacketData = new byte[10000];
+        //Audio Queue
+        Queue<FrameReceivedObject> audioQueue = new LinkedList<>();
+        int lastCompletedFrameInQueueAudio = -1;
+        FrameReceivedObject[] FramesAudioBuffer = new FrameReceivedObject[maxAudioStored];
+
+        byte[] currentPacketData = new byte[2000];
         byte[] datagramData = new byte[1];
         boolean searchFrame = false;
         int frStart;
@@ -103,6 +117,11 @@ public class Streaming {
         //The thread that display the images with a static rate (stable fps)
         Thread displayImagesThread;
 
+        //The thread that play the audio
+        Thread displayAudioThread;
+
+
+
         //Audio
         ADPCME_Codec coder_ADPCME = new ADPCME_Codec();
 
@@ -114,8 +133,13 @@ public class Streaming {
                 esp32Port = 8000;
                 esp32Ip = InetAddress.getByName("192.168.2.180");
                 for(int i=0;i<maxImagesStored;i++){
-                    FramesBuffer[i]=new FrameReceivedObject();
+                    FramesImagesBuffer[i]=new FrameReceivedObject(imagesBufferSize);
                 }
+
+                for(int i=0;i<maxAudioStored;i++){
+                    FramesAudioBuffer[i]=new FrameReceivedObject(audioBufferSize);
+                }
+
             } catch (IOException e) {
                 Log.e("Myti", "Exception in CommunicationReceiveThread : ", e);
             }
@@ -149,6 +173,9 @@ public class Streaming {
             displayImagesThread = createImagesThread();
             displayImagesThread.start();
 
+            displayAudioThread = createAudioThread();
+            displayAudioThread.start();
+
             while (!Thread.currentThread().isInterrupted()) {
 
                 try {
@@ -176,7 +203,7 @@ public class Streaming {
                     if (packetType == imageType){
                         storeImages();
                     }else{
-                        continue;
+                        storeAudio();
                     }
 
                 } catch (IOException e) {
@@ -213,8 +240,47 @@ public class Streaming {
             });
         }
 
+        public Thread createAudioThread()
+        {
+            return new Thread(new Runnable() {
+                @Override
+                public void run() {
+
+                    while (!Thread.currentThread().isInterrupted())
+                    {
+                        displayAudio();
+                    }
+                }
+            });
+        }
+
         public void storeAudio(){
 
+            System.arraycopy(datagramData, headerLen, currentPacketData, 0, packetDataSize);
+
+            //FramesImagesBuffer[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
+            FramesAudioBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId, corruptedPacketLength, restoreCorruptedPacket);
+
+            //If the frame was completed then add it into a FIFO queue
+            if (FramesAudioBuffer[localFrameId].frameIsFilled()) {
+                lastCompletedFrameInQueueAudio = localFrameId;
+                imagesQueue.add(FramesAudioBuffer[localFrameId].clone());
+
+                //Clear the frames (not the the Queue) buffer which are between 2 consecutive completed frames
+                if (localFrameId >= prevLocalFrameId) {
+                    for (int i = prevLocalFrameId; i <= localFrameId; i++)
+                        FramesAudioBuffer[i].initiateFrame();
+                } else {
+                    for (int i = prevLocalFrameId; i < maxImagesStored; i++)
+                        FramesAudioBuffer[i].initiateFrame();
+
+                    for (int i = 0; i < localFrameId; i++)
+                        FramesAudioBuffer[i].initiateFrame();
+                }
+                prevLocalFrameId = localFrameId;
+            }
+            //esp32Ip = phoneDpReceive.getAddress();
+            //esp32Port = phoneDpReceive.getPort();
         }
 
         public void storeImages(){
@@ -238,7 +304,7 @@ public class Streaming {
                 //If we get a resend packet then we need to put the data in correct position
                 if (packetResend != defaultResendPacketCode) {
                     byte[] tempData = new byte[datagramPacketLength];
-                    System.arraycopy(FramesBuffer[localFrameId].buffer, packetId * packetsDataLength, tempData, 0, packetsDataLength);
+                    System.arraycopy(FramesImagesBuffer[localFrameId].buffer, packetId * packetsDataLength, tempData, 0, packetsDataLength);
                     //System.arraycopy(datagramData, 0, tempData, 0, headerLen);
                     int prevStep = 0;
                     int startPosFrame = 0;
@@ -343,8 +409,8 @@ public class Streaming {
                 if (frameId < lastCompletedFrameInQueue) return;
 
                 //If the localFrameId is corrupted or the header is from other frame then skip
-                if (FramesBuffer[localFrameId].compareHeaders(frameId, frameSize, packetsNumber, localFrameId) != 0) {
-                    //FramesBuffer[localFrameId].initiateFrame(); //Broken Frame
+                if (FramesImagesBuffer[localFrameId].compareHeaders(frameId, frameSize, packetsNumber, localFrameId) != 0) {
+                    //FramesImagesBuffer[localFrameId].initiateFrame(); //Broken Frame
                     return;
                 }
 
@@ -354,24 +420,24 @@ public class Streaming {
                 }
 
 
-                //FramesBuffer[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
-                FramesBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId, corruptedPacketLength, restoreCorruptedPacket);
+                //FramesImagesBuffer[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
+                FramesImagesBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId, corruptedPacketLength, restoreCorruptedPacket);
 
                 //If the frame was completed then add it into a FIFO queue
-                if (FramesBuffer[localFrameId].frameIsFilled()) {
+                if (FramesImagesBuffer[localFrameId].frameIsFilled()) {
                     lastCompletedFrameInQueue = localFrameId;
-                    imagesQueue.add(FramesBuffer[localFrameId].clone());
+                    imagesQueue.add(FramesImagesBuffer[localFrameId].clone());
 
                     //Clear the frames (not the the Queue) buffer which are between 2 consecutive completed frames
                     if (localFrameId >= prevLocalFrameId) {
                         for (int i = prevLocalFrameId; i <= localFrameId; i++)
-                            FramesBuffer[i].initiateFrame();
+                            FramesImagesBuffer[i].initiateFrame();
                     } else {
                         for (int i = prevLocalFrameId; i < maxImagesStored; i++)
-                            FramesBuffer[i].initiateFrame();
+                            FramesImagesBuffer[i].initiateFrame();
 
                         for (int i = 0; i < localFrameId; i++)
-                            FramesBuffer[i].initiateFrame();
+                            FramesImagesBuffer[i].initiateFrame();
                     }
                     prevLocalFrameId = localFrameId;
                 }
@@ -403,6 +469,31 @@ public class Streaming {
                         framesCount++;
                         displayStat_bo = true;
                     }
+
+                    timePrevFrame = System.currentTimeMillis();
+                } catch (Exception e) {
+                    Log.e("Myti", "Exception in try to display image in view", e);
+                }
+            }
+        }
+
+        public void displayAudio(){
+            //The decoded records are in short (12bit) not in byte, must fix that   <---------------------
+
+
+
+
+
+            FrameReceivedObject audioObj = imagesQueue.poll();
+            Log.d("Myti", "Queue images size: " + imagesQueue.size());
+            if (audioObj != null) {
+                try {
+                    track = new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                            audioObj.frameSize, AudioTrack.MODE_STREAM);
+
+                    track.play();
+                    track.write(audioObj.buffer, 0, audioObj.frameSize);
+
 
                     timePrevFrame = System.currentTimeMillis();
                 } catch (Exception e) {
@@ -516,16 +607,29 @@ public class Streaming {
     }
 
     public class FrameReceivedObject {
-        int maxObjectLength = 40000;    //Max size 40kbytes
-        byte[] buffer = new byte[maxObjectLength];
-        int objLength = 0;
-        int packetsNumber = -1;
-        int packetsNumberCounter = 0;
-        int frameId = -1;
-        int frameSize = -1;
-        int localFrameId = -1;
-        boolean frameIsBroken = false;
-        boolean skipThisFrame = false;
+        int maxObjectLength;    //Max size 40kbytes
+        byte[] buffer;
+        int objLength;
+        int packetsNumber;
+        int packetsNumberCounter;
+        int frameId;
+        int frameSize;
+        int localFrameId;
+        boolean frameIsBroken;
+        boolean skipThisFrame;
+
+        public FrameReceivedObject(int FrameSize){
+            maxObjectLength = FrameSize;    //Max size 40kbytes
+            buffer = new byte[maxObjectLength];
+            objLength = 0;
+            packetsNumber = -1;
+            packetsNumberCounter = 0;
+            frameId = -1;
+            frameSize = -1;
+            localFrameId = -1;
+            frameIsBroken = false;
+            skipThisFrame = false;
+        }
 
         /*Compare the headers */
         public byte compareHeaders(int crnFrameId, int crnFrameSize, int crnPacketsNumber, int crnLocalFrameId) {
@@ -614,7 +718,7 @@ public class Streaming {
         @NonNull
         @Override
         public FrameReceivedObject clone(){
-            FrameReceivedObject objCopy = new FrameReceivedObject();
+            FrameReceivedObject objCopy = new FrameReceivedObject(imagesBufferSize);
             System.arraycopy(this.buffer, 0, objCopy.buffer, 0, this.buffer.length);
             objCopy.objLength = this.objLength;
             objCopy.packetsNumber = this.packetsNumber;
