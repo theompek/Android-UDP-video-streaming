@@ -37,7 +37,7 @@ public class Streaming {
     int maxAudioStored  =   50;
     int audioBufferSize = 4000; //4kbs pes audio
     AudioTrack track = null;
-    int sampleRate = 21000; //21khz
+    int sampleRate = 10000; //21khz
     byte headerLen = 30;
     int reservedBytesNum = 4;
     int NumOfChkSums = 8;
@@ -63,7 +63,7 @@ public class Streaming {
         Queue<FrameReceivedObject> audioQueue = new LinkedList<>();
         int lastCompletedFrameInQueueAudio = -1;
         FrameReceivedObject[] FramesAudioBuffer = new FrameReceivedObject[maxAudioStored];
-
+        ADPCME_Codec adpcme_codec = new ADPCME_Codec();
         byte[] currentPacketData = new byte[2000];
         byte[] datagramData = new byte[1];
         boolean searchFrame = false;
@@ -80,7 +80,8 @@ public class Streaming {
         int packetId;
         int frameSize;
         int localFrameId;
-        int prevLocalFrameId = 0;
+        int prevImageLocalFrameId = 0;
+        int prevAudioLocalFrameId=0;
         int receivedCheckSum[] = new int[NumOfChkSums];
         byte checkSums[] = new byte[NumOfChkSums];
         boolean currentFrameIsBroken = false;
@@ -245,10 +246,15 @@ public class Streaming {
             return new Thread(new Runnable() {
                 @Override
                 public void run() {
+                    int bufferSizeInBytes = 10000; //10000 kbs
+                    track = new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                            bufferSizeInBytes, AudioTrack.MODE_STREAM);
+                    track.play();
 
+                    short decodedSamples[] = new short[audioBufferSize*2];   //For each byte we get 2 samples
                     while (!Thread.currentThread().isInterrupted())
                     {
-                        displayAudio();
+                        displayAudio(decodedSamples);
                     }
                 }
             });
@@ -259,25 +265,25 @@ public class Streaming {
             System.arraycopy(datagramData, headerLen, currentPacketData, 0, packetDataSize);
 
             //FramesImagesBuffer[localFrameId].initiateFrame(packetsNumber, frameId, frameSize, localFrameId);
-            FramesAudioBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId, corruptedPacketLength, restoreCorruptedPacket);
+            FramesAudioBuffer[localFrameId].addDataToBuffer(currentPacketData, packetDataSize, packetId, corruptedPacketLength, false);
 
             //If the frame was completed then add it into a FIFO queue
             if (FramesAudioBuffer[localFrameId].frameIsFilled()) {
                 lastCompletedFrameInQueueAudio = localFrameId;
-                imagesQueue.add(FramesAudioBuffer[localFrameId].clone());
+                audioQueue.add(FramesAudioBuffer[localFrameId].clone());
 
                 //Clear the frames (not the the Queue) buffer which are between 2 consecutive completed frames
-                if (localFrameId >= prevLocalFrameId) {
-                    for (int i = prevLocalFrameId; i <= localFrameId; i++)
+                if (localFrameId >= prevAudioLocalFrameId) {
+                    for (int i = prevAudioLocalFrameId; i <= localFrameId; i++)
                         FramesAudioBuffer[i].initiateFrame();
                 } else {
-                    for (int i = prevLocalFrameId; i < maxImagesStored; i++)
+                    for (int i = prevAudioLocalFrameId; i < maxAudioStored; i++)
                         FramesAudioBuffer[i].initiateFrame();
 
                     for (int i = 0; i < localFrameId; i++)
                         FramesAudioBuffer[i].initiateFrame();
                 }
-                prevLocalFrameId = localFrameId;
+                prevAudioLocalFrameId = localFrameId;
             }
             //esp32Ip = phoneDpReceive.getAddress();
             //esp32Port = phoneDpReceive.getPort();
@@ -429,17 +435,17 @@ public class Streaming {
                     imagesQueue.add(FramesImagesBuffer[localFrameId].clone());
 
                     //Clear the frames (not the the Queue) buffer which are between 2 consecutive completed frames
-                    if (localFrameId >= prevLocalFrameId) {
-                        for (int i = prevLocalFrameId; i <= localFrameId; i++)
+                    if (localFrameId >= prevImageLocalFrameId) {
+                        for (int i = prevImageLocalFrameId; i <= localFrameId; i++)
                             FramesImagesBuffer[i].initiateFrame();
                     } else {
-                        for (int i = prevLocalFrameId; i < maxImagesStored; i++)
+                        for (int i = prevImageLocalFrameId; i < maxImagesStored; i++)
                             FramesImagesBuffer[i].initiateFrame();
 
                         for (int i = 0; i < localFrameId; i++)
                             FramesImagesBuffer[i].initiateFrame();
                     }
-                    prevLocalFrameId = localFrameId;
+                    prevImageLocalFrameId = localFrameId;
                 }
                 //esp32Ip = phoneDpReceive.getAddress();
                 //esp32Port = phoneDpReceive.getPort();
@@ -477,27 +483,28 @@ public class Streaming {
             }
         }
 
-        public void displayAudio(){
-            //The decoded records are in short (12bit) not in byte, must fix that   <---------------------
+        public void displayAudio(short[] decodedSamples){
+            //Because the audio is glitching I have to measure the timings and synchronize the send-receive process   <-------
 
 
+            FrameReceivedObject audioObj = audioQueue.poll();
 
-
-
-            FrameReceivedObject audioObj = imagesQueue.poll();
-            Log.d("Myti", "Queue images size: " + imagesQueue.size());
+            Log.d("Myti", "Queue images size: " + audioQueue.size());
             if (audioObj != null) {
                 try {
-                    track = new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
-                            audioObj.frameSize, AudioTrack.MODE_STREAM);
+                    int frameAudioSize = 2*audioObj.objLength;
 
-                    track.play();
-                    track.write(audioObj.buffer, 0, audioObj.frameSize);
+                    for(int i = 0; i<audioObj.objLength;i++){
+                        decodedSamples[i*2] = adpcme_codec.decoder((byte) (audioObj.buffer[i] & 0x0f));
+                        decodedSamples[i*2+1] = adpcme_codec.decoder(((byte) (audioObj.buffer[i]>>4 & 0x0f))) ;
+                    }
 
 
+                    track.write(decodedSamples, 0, frameAudioSize);
+                    //Thread.sleep(4000);
                     timePrevFrame = System.currentTimeMillis();
                 } catch (Exception e) {
-                    Log.e("Myti", "Exception in try to display image in view", e);
+                    Log.e("Myti", "Exception in try to play audio", e);
                 }
             }
         }
